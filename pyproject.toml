@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-development-pipeline"
+version = "0.1.0"
+description = "A phase-oriented orchestration harness for autonomous coding agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+[project.scripts]
+dev-pipeline = "dev_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dev_pipeline*"]
+
