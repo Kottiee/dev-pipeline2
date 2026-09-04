@@ -36,6 +36,16 @@ dev-pipeline --help
 
 ## クイックスタート
 
+### 開発リポジトリの置き場（運用ルール）
+
+新規開発では `work/<ID>/repo/` を基本の置き場とします。別の場所を使いたい場合や
+既存リポジトリを改修する場合は、その場所を `--repo` で指定します。
+これは運用上の取り決めであり、CLIが自動で配置するものではありません。
+
+`--repo` の省略時はカレントディレクトリが使われ、指定したパスも保存されません。
+実装・検証・レビューの実行時には、再開時も含めて同じ `--repo` を明示してください。
+相対パスはCLIを起動したディレクトリから解決されるため、以下の例は同じディレクトリで実行します。
+
 ### 1. 自然言語の要求から開始
 
 Planningは人間の承認待ちで停止せず、Phase 1を即座に `running` にします。
@@ -59,19 +69,41 @@ dev-pipeline init --id INIT-001 \
 
 ### 2. Agent Runを実行
 
-AgentはRepositoryを直接変更し、最終行に共通JSON契約を返します。`GOAL_REACHED` の場合は指定した
+新規開発では、上記の `init` が完了してから成果物用のリポジトリを作成します。
+`init` はPlanningのみで成果物を実装しません。既存の `work/<ID>/` があると `init` が失敗するため、
+その配下の `repo/` を先に作成しないでください。既存リポジトリを使う場合、この作成手順は不要です。
+
+```bash
+mkdir -p work/INIT-001/repo
+git init work/INIT-001/repo
+```
+
+AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は指定した
 VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。
 
 ```bash
-dev-pipeline --repo . --agent codex run INIT-001 \
+dev-pipeline --repo work/INIT-001/repo --agent codex run INIT-001 \
   --check 'test=python -m unittest discover -v' \
   --check 'build=python -m build'
 ```
 
+Human Checkまで自律的に継続する場合は `--until-ready` を指定します。`CONTINUE`、検証失敗、
+レビュー指摘から次Runへ進み、Checkpoint・検証ログ・レビュー指摘を次のAgentへ渡します。
+Human Checkは自動承認しません。Agentプロセス自体の起動・認証エラーは報告して終了します。
+
+```bash
+dev-pipeline --repo work/INIT-001/repo --agent codex run INIT-001 --until-ready \
+  --check 'test=python -m unittest discover -v'
+```
+
+Codexの既定コマンドは `codex exec --sandbox workspace-write -` です。
+認証済みCodex CLIの設定を使用し、モデルは固定しません。
+
 AgentのCLI引数が環境と異なる場合はコマンドを差し替えられます。Promptはstdinに渡されます。
 
 ```bash
-dev-pipeline --agent codex --agent-command 'codex exec -' run INIT-001 \
+dev-pipeline --repo work/INIT-001/repo --agent codex \
+  --agent-command 'codex exec --sandbox workspace-write -' run INIT-001 \
   --check 'test=pytest -q'
 ```
 
@@ -91,8 +123,8 @@ dev-pipeline human-check INIT-001 FEEDBACK \
 検証とレビューはトラブルシュート用に個別実行もできます。
 
 ```bash
-dev-pipeline --repo . verify INIT-001 --check 'test=python -m unittest discover -v'
-dev-pipeline --repo . --agent opencode review INIT-001
+dev-pipeline --repo work/INIT-001/repo verify INIT-001 --check 'test=python -m unittest discover -v'
+dev-pipeline --repo work/INIT-001/repo --agent codex review INIT-001
 ```
 
 ## 永続化レイアウト
@@ -101,6 +133,7 @@ dev-pipeline --repo . --agent opencode review INIT-001
 work/INIT-001/
 ├── initiative.json
 ├── state.json
+├── repo/                         # 新規開発の成果物（運用で作成。外部配置も可）
 ├── phases/                       # Phase契約
 ├── runs/                         # Run Checkpoint
 ├── feedback/                     # ACCEPT / FEEDBACK
@@ -111,7 +144,7 @@ work/INIT-001/
     └── *-agent.log
 ```
 
-`state.json` が現在地点のSource of Truthです。Agentプロセスが終了しても、同じ `--work-dir` とIDで
+`state.json` が現在地点のSource of Truthです。Agentプロセスが終了しても、同じ `--work-dir`・ID・`--repo` で
 次のRunを開始できます。Verification失敗またはReview FindingsがあるPhaseはHuman Checkへ進みません。
 
 ## Agent出力契約

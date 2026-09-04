@@ -13,7 +13,7 @@ class AgentError(RuntimeError):
 
 
 DEFAULT_COMMANDS = {
-    "codex": "codex exec --full-auto -",
+    "codex": "codex exec --sandbox workspace-write -",
     "opencode": "opencode run",
 }
 

@@ -32,13 +32,16 @@ def _plan(args: argparse.Namespace, agent: CommandAgent) -> tuple[str, list[str]
     request = args.request or args.goal
     if not request:
         raise ValueError("--request or --goal is required")
-    prompt = f"""Turn this human request into an actionable initiative and several human-reviewable
+    prompt = f"""Turn this human request into an actionable initiative and one or more human-reviewable
 phases. Do not implement anything. Request: {request}
 Additional requirements: {args.requirement}
 Constraints: {args.constraint}
 Output exactly one JSON object and nothing after it with this schema:
 {{"goal":"...","requirements":["..."],"constraints":["..."],"phases":[{{"goal":"...","scope":["..."],"acceptance_criteria":["..."]}}]}}
 Every phase must be independently runnable and reviewable. Do not create work items.
+Use the smallest number of meaningful human-review units. A small request may be one phase.
+Do not split individual implementation steps or tests into separate phases
+when they belong to the same usable outcome.
 """
     data = agent.execute(prompt, Path(args.repo)).data
     keys = {"goal", "requirements", "constraints", "phases"}
@@ -66,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="execute one run and automatically verify/review when done")
     run.add_argument("id")
     run.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
+    run.add_argument("--until-ready", action="store_true",
+                     help="continue implementation and repair until Human Check is ready")
 
     verify = sub.add_parser("verify", help="run configured checks for the current phase")
     verify.add_argument("id")
@@ -99,7 +104,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         pipeline = Pipeline(store, Path(args.repo), _agent(args))
         if args.command == "run":
-            print(pipeline.run(_checks(args.check)))
+            checks = _checks(args.check)
+            if args.until_ready:
+                print(pipeline.run_until_ready(checks))
+            else:
+                print(pipeline.run(checks))
         elif args.command == "verify":
             passed = pipeline.verify(_checks(args.check))
             print("PASS" if passed else "FAIL")
@@ -118,4 +127,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

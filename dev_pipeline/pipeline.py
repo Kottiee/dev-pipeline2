@@ -38,7 +38,7 @@ class Pipeline:
         self.store.save_state(state)
         initiative = self.store.load_initiative()
         phase = self.store.load_phase(state.current_phase)
-        prompt = self._run_prompt(initiative, phase, state)
+        prompt = self._run_prompt(initiative, phase, state, checks)
         result = self.agent.execute(prompt, self.repository)
         outcome = RunOutcome.from_dict(result.data)
         run_id = f"run-{state.current_run:03d}"
@@ -51,6 +51,20 @@ class Pipeline:
         if not self.verify(checks):
             return "VERIFICATION_FAILED"
         return "READY" if self.review() else "REVIEW_FINDINGS"
+
+    def run_until_ready(self, checks: list[tuple[str, str]]) -> str:
+        if not checks:
+            raise TransitionError("at least one verification check is required before review")
+        while True:
+            state = self.store.load_state()
+            if state.state == "AWAITING_HUMAN_CHECK":
+                return "READY"
+            if state.state == "PHASE_VERIFYING":
+                self.verify(checks)
+            elif state.state == "PHASE_REVIEWING":
+                self.review()
+            elif self.run(checks) == "READY":
+                return "READY"
 
     def verify(self, checks: list[tuple[str, str]]) -> bool:
         state = self.store.load_state()
@@ -139,9 +153,21 @@ class Pipeline:
         self.store.save_state(state)
         return state.state
 
-    def _run_prompt(self, initiative: Initiative, phase: Phase, state: PipelineState) -> str:
+    def _phase_context(self, phase: Phase) -> str:
+        checkpoints = sorted((self.store.path / "runs").glob(f"{phase.id}-run-*.md"),
+                             key=lambda path: int(path.stem.rsplit("-", 1)[1]))
+        paths = checkpoints[-1:]
+        paths.extend(self.store.path / "evidence" / f"{phase.id}-{suffix}" for suffix in (
+            "verification.json", "verification.log", "adversarial-review.json"))
+        return "\n\n".join(f"{path.name}:\n{path.read_text(encoding='utf-8')}"
+                            for path in paths if path.exists()) or "none"
+
+    def _run_prompt(self, initiative: Initiative, phase: Phase, state: PipelineState,
+                    checks: list[tuple[str, str]]) -> str:
         feedback_files = sorted((self.store.path / "feedback").glob(f"{phase.id}-*.json"))
         feedback = feedback_files[-1].read_text(encoding="utf-8") if feedback_files else "none"
+        accepted = [self.store.load_phase(phase_id).as_dict()
+                    for phase_id in initiative.phase_order[:phase.sequence - 1]]
         return f"""You are the implementation agent for an autonomous development pipeline.
 Work directly in repository: {self.repository}
 Initiative goal: {initiative.goal}
@@ -151,6 +177,11 @@ Phase: {phase.goal}
 Scope: {phase.scope}
 Acceptance criteria: {phase.acceptance_criteria}
 Latest human feedback: {feedback}
+Previously accepted phases: {accepted}
+Current run: {state.current_run}
+Verification commands (run in the repository): {checks}
+Current progress and latest evidence (may refer to an earlier run):
+{self._phase_context(phase)}
 
 Inspect the current repository, implement and test as much as possible in this run. Do not ask
 the human about machine-checkable issues. At the very end, output exactly one JSON object (and
@@ -163,9 +194,13 @@ Choose GOAL_REACHED only when every acceptance criterion is implemented and loca
         return f"""Act as an adversarial reviewer, independent from the implementer. Inspect the
 repository at {self.repository} and find reasons to reject this phase. Do not modify files.
 Initiative goal: {initiative.goal}
+Requirements: {initiative.requirements}
+Constraints: {initiative.constraints}
 Phase goal: {phase.goal}
 Scope: {phase.scope}
 Acceptance criteria: {phase.acceptance_criteria}
+Current progress and verification evidence:
+{self._phase_context(phase)}
 Output exactly one JSON object and nothing after it. Schema:
 {{"result":"PASS"|"FINDINGS","findings":[{{"severity":"high|medium|low","description":"...","recommendation":"..."}}]}}
 PASS is allowed only when there are no findings.
