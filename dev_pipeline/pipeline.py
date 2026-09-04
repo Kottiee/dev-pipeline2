@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .agents import CommandAgent
+from .agents.base import Agent
 from .models import Initiative, Phase, PipelineState, RunOutcome, now_iso
 from .store import WorkStore
 
@@ -14,7 +14,7 @@ class TransitionError(RuntimeError):
 
 
 class Pipeline:
-    def __init__(self, store: WorkStore, repository: Path, agent: CommandAgent):
+    def __init__(self, store: WorkStore, repository: Path, agent: Agent):
         self.store = store
         self.repository = repository.resolve()
         self.agent = agent

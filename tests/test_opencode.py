@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from dev_pipeline.agents import AgentError, CommandAgent
+from dev_pipeline.agents import AgentError, CommandAgent, OpenCodeAgent
 
 
 def events(answer, reason="stop", session="session-1"):
@@ -29,10 +29,10 @@ class OpenCodeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name).resolve()
         self.logs = self.repo / "logs"
-        self.agent = CommandAgent("opencode", log_dir=self.logs)
+        self.agent = OpenCodeAgent(log_dir=self.logs)
 
     def test_events_and_working_directory(self):
-        with patch("dev_pipeline.agents.subprocess.run", return_value=completed(
+        with patch("dev_pipeline.agents.process.subprocess.run", return_value=completed(
             events('{"result":"PASS","findings":[]}'), stderr="diagnostic"
         )) as run:
             result = self.agent.execute("review", self.repo)
@@ -48,7 +48,7 @@ class OpenCodeTests(unittest.TestCase):
     def test_repairs_malformed_answer_in_same_session_without_restarting_work(self):
         malformed = '{"result":"FINDINGS","findings":[{"description":"value "x" lost"}]}'
         correct = {"result": "FINDINGS", "findings": [{"description": 'value "x" lost'}]}
-        with patch("dev_pipeline.agents.subprocess.run", side_effect=[
+        with patch("dev_pipeline.agents.process.subprocess.run", side_effect=[
             completed(events(malformed)), completed(events(json.dumps(correct))),
         ]) as run:
             result = self.agent.execute("implement and review", self.repo)
@@ -60,7 +60,7 @@ class OpenCodeTests(unittest.TestCase):
         self.assertEqual(2, len(list(self.logs.glob("*.json"))))
 
     def test_format_retries_are_bounded_and_failure_is_logged(self):
-        with patch("dev_pipeline.agents.subprocess.run",
+        with patch("dev_pipeline.agents.process.subprocess.run",
                    return_value=completed(events("invalid JSON"))) as run:
             with self.assertRaisesRegex(AgentError, "agent log:"):
                 self.agent.execute("review", self.repo)
@@ -72,7 +72,7 @@ class OpenCodeTests(unittest.TestCase):
             "type": "tool_use", "part": {"state": {
                 "status": "error", "error": "The user rejected permission to use this tool call."}},
         })
-        with patch("dev_pipeline.agents.subprocess.run", side_effect=[
+        with patch("dev_pipeline.agents.process.subprocess.run", side_effect=[
             completed(output), completed(events('{"result":"FINDINGS"}')),
         ]) as run:
             result = self.agent.execute("review", self.repo)
@@ -87,7 +87,7 @@ class OpenCodeTests(unittest.TestCase):
             "type": "tool_use", "part": {"state": {
                 "status": "error", "error": "The user rejected permission to use this tool."}},
         })
-        with patch("dev_pipeline.agents.subprocess.run", return_value=completed(output)) as run:
+        with patch("dev_pipeline.agents.process.subprocess.run", return_value=completed(output)) as run:
             with self.assertRaisesRegex(AgentError, "permission interruption.*agent log:"):
                 self.agent.execute("review", self.repo)
         self.assertEqual(3, run.call_count)
@@ -96,13 +96,13 @@ class OpenCodeTests(unittest.TestCase):
         output = events('{"result":"PASS"}') + "\n" + json.dumps({
             "type": "error", "error": {"name": "APIError", "message": "rate limited"},
         })
-        with patch("dev_pipeline.agents.subprocess.run", return_value=completed(output)) as run:
+        with patch("dev_pipeline.agents.process.subprocess.run", return_value=completed(output)) as run:
             with self.assertRaisesRegex(AgentError, "rate limited"):
                 self.agent.execute("review", self.repo)
         run.assert_called_once()
 
     def test_process_error_is_logged_without_retry(self):
-        with patch("dev_pipeline.agents.subprocess.run",
+        with patch("dev_pipeline.agents.process.subprocess.run",
                    return_value=completed("partial", 1, "auth failed")) as run:
             with self.assertRaisesRegex(AgentError, "auth failed.*agent log:"):
                 self.agent.execute("review", self.repo)
@@ -121,8 +121,8 @@ class OpenCodeTests(unittest.TestCase):
             self.agent._opencode_answer('{"type":')
 
     def test_custom_command_keeps_plain_json_contract(self):
-        agent = CommandAgent("opencode", "custom-agent --flag")
-        with patch("dev_pipeline.agents.subprocess.run",
+        agent = CommandAgent("custom-agent --flag")
+        with patch("dev_pipeline.agents.process.subprocess.run",
                    return_value=completed('{"result":"PASS"}')) as run:
             self.assertEqual("PASS", agent.execute("prompt", self.repo).data["result"])
         self.assertEqual(["custom-agent", "--flag"], run.call_args.args[0])

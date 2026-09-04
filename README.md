@@ -139,8 +139,11 @@ CLIオプションと権限の詳細は[OpenCode CLI](https://opencode.ai/docs/c
 実機での復帰確認と新規E2Eの結果は[OpenCode実機検証](docs/opencode-e2e.md)に記録しています。
 
 AgentのCLI引数が環境と異なる場合はコマンドを差し替えられます。Promptはstdinに渡されます。
-`--agent-command` を指定した場合は共通の生JSON出力契約を使い、OpenCode固有の
-イベント抽出・セッション復帰は行いません。
+`--agent-command` は選択したアダプターの起動コマンドを上書きします。
+OpenCodeを選択した場合は、上書きしてもイベント抽出・セッション復帰を維持します。
+OpenCode用のコマンドには `--format`・`--dir`・`--session` を含めず、アダプターに任せてください。
+汎用の生JSON出力コマンドを使う場合は `--agent command --agent-command '任意のCLI'` とします。
+以前の `--agent opencode --agent-command '生JSONを返す独自CLI'` も、この指定に変更してください。
 
 ```bash
 dev-pipeline --repo work/INIT-001/repo --agent codex \
@@ -219,8 +222,36 @@ work/INIT-001/
 ```
 
 Agentの最終回答は単一のJSON objectである必要があります。既定のOpenCodeアダプターは
-CLIのJSONイベントから最終回答を抽出します。Codexおよび `--agent-command` の出力では、
+CLIのJSONイベントから最終回答を抽出します。Codexおよび汎用commandアダプターの出力では、
 stdout末尾が単一のJSON objectである必要があります（途中出力は許容）。
+
+## Agentの追加・差し替え
+
+PipelineとPlanningは `Agent.execute(prompt, repository) -> AgentResult` だけに依存します。
+具体的なCLIの引数・出力解析・セッション復帰は各アダプターが担当します。
+
+```text
+dev_pipeline/agents/
+├── base.py       # Agent Protocol・共通結果／例外・JSON抽出
+├── process.py    # プロセス実行・作業ディレクトリ・ログ保存
+├── command.py    # 汎用stdin → 生JSON stdout
+├── codex.py      # Codexの起動設定
+├── opencode.py   # OpenCodeのイベント解析・セッション復帰
+└── __init__.py   # アダプター登録・生成
+```
+
+新しいCLIが共通の生JSON契約を満たす場合は、実装を追加せずに利用できます。
+
+```bash
+dev-pipeline --repo work/INIT-001/repo --agent command \
+  --agent-command 'my-agent run' run INIT-001 --until-ready \
+  --check 'test=python -m unittest discover -v'
+```
+
+独自形式のCLIは、`execute`を持つアダプターを追加し、`AGENT_FACTORIES`に名前と
+ファクトリーを登録します。ファクトリーは `(command, log_dir)` を受け取ります。
+PipelineやCLIの選択肢を修正する必要はありません。CLI型アダプターは`ProcessRunner`を再利用でき、
+CLI以外のAgentも`AgentResult`を返すだけで接続できます。継承や動的プラグイン機構は必須にしていません。
 
 ## 開発時の検証
 

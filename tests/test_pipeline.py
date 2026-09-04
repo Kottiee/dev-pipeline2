@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 from subprocess import CompletedProcess
 
-from dev_pipeline.agents import AgentResult, CommandAgent
+from dev_pipeline.agents import AgentResult, CodexAgent
+from dev_pipeline.agents.base import extract_json
 from dev_pipeline.cli import main
 from dev_pipeline.pipeline import Pipeline, TransitionError
 from dev_pipeline.store import WorkStore
@@ -53,7 +54,7 @@ class PipelineTests(unittest.TestCase):
         source = repo / "existing.txt"
         source.write_text("keep this", encoding="utf-8")
         plan = {"goal": "ship", "requirements": ["works"], "constraints": [], "phases": PHASES}
-        with patch("dev_pipeline.cli.CommandAgent.execute",
+        with patch("dev_pipeline.agents.codex.CodexAgent.execute",
                    return_value=AgentResult(plan, json.dumps(plan), "")) as execute:
             with patch("builtins.print"):
                 result = main(["--work-dir", str(store.root), "--repo", str(repo),
@@ -211,15 +212,15 @@ class PipelineTests(unittest.TestCase):
 
 class AgentParsingTests(unittest.TestCase):
     def test_codex_command_uses_workspace_write(self):
-        agent = CommandAgent("codex")
-        with patch("dev_pipeline.agents.subprocess.run",
+        agent = CodexAgent()
+        with patch("dev_pipeline.agents.process.subprocess.run",
                    return_value=CompletedProcess("codex", 0, '{"result":"PASS"}', "")) as run:
             agent.execute("prompt", Path("."))
         self.assertEqual(["codex", "exec", "--sandbox", "workspace-write", "-"],
                          run.call_args.args[0])
 
     def test_extracts_final_json_after_noisy_output(self):
-        self.assertEqual({"result": "PASS"}, CommandAgent._extract_json("thinking\n{\"result\":\"PASS\"}\n"))
+        self.assertEqual({"result": "PASS"}, extract_json("thinking\n{\"result\":\"PASS\"}\n"))
 
 
 if __name__ == "__main__":

@@ -5,14 +5,15 @@ import json
 import sys
 from pathlib import Path
 
-from .agents import AgentError, CommandAgent
+from .agents import AgentError, create_agent
+from .agents.base import Agent
 from .pipeline import Pipeline, TransitionError
 from .store import WorkStore
 
 
-def _agent(args: argparse.Namespace) -> CommandAgent:
+def _agent(args: argparse.Namespace) -> Agent:
     log_dir = WorkStore(Path(args.work_dir), args.id).path / "agent-logs"
-    return CommandAgent(args.agent, args.agent_command, log_dir=log_dir)
+    return create_agent(args.agent, args.agent_command, log_dir=log_dir)
 
 
 def _checks(values: list[str]) -> list[tuple[str, str]]:
@@ -24,7 +25,7 @@ def _checks(values: list[str]) -> list[tuple[str, str]]:
     return parsed
 
 
-def _plan(args: argparse.Namespace, agent: CommandAgent) -> tuple[str, list[str], list[str], list[dict]]:
+def _plan(args: argparse.Namespace, agent: Agent) -> tuple[str, list[str], list[str], list[dict]]:
     if args.phase_file:
         phases = json.loads(Path(args.phase_file).read_text(encoding="utf-8"))
         if not isinstance(phases, list) or not phases:
@@ -55,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev-pipeline", description="Phase-oriented AI development pipeline")
     parser.add_argument("--work-dir", default="work", help="pipeline state directory")
     parser.add_argument("--repo", default=".", help="repository agents and checks operate in")
-    parser.add_argument("--agent", default="codex", choices=("codex", "opencode"))
+    parser.add_argument("--agent", default="codex", help="adapter name (codex, opencode, command, or a registered adapter)")
     parser.add_argument("--agent-command", help="override adapter command (prompt is provided on stdin)")
     sub = parser.add_subparsers(dest="command", required=True)
 
