@@ -19,7 +19,10 @@ class WorkStore:
         self.path = self.root / initiative_id
 
     def create(self, initiative: Initiative, phases: list[Phase]) -> None:
-        if self.path.exists():
+        # A repository may already have been prepared beneath this directory.
+        # Refuse to overwrite pipeline metadata, including a partial initialization.
+        managed_paths = ("initiative.json", "state.json", "phases", "runs", "feedback", "evidence")
+        if any((self.path / name).exists() for name in managed_paths):
             raise FileExistsError(f"initiative already exists: {self.initiative_id}")
         for directory in ("phases", "runs", "feedback", "evidence"):
             (self.path / directory).mkdir(parents=True, exist_ok=True)

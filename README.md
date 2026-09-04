@@ -6,13 +6,28 @@ Human Checkを永続的な状態機械としてつなぎます。
 
 ## 実装済みのフロー
 
-```text
-Human Request → AI Phase Planning → Phase 1 / Agent Run
-  → Checkpoint → (必要なら次Run)
-  → Verification → Adversarial Review → Human Check
-                                            ├─ FEEDBACK → Fix Run
-                                            └─ ACCEPT → Next Phase
+```mermaid
+flowchart TD
+    request["Human Request<br/>目的・要求・制約"] --> plan["AI Phase Planning"]
+    plan --> start["Phase開始"]
+    start --> run["Agent Run<br/>実装・修正"]
+    run --> checkpoint["Checkpoint保存"]
+    checkpoint --> goal{"Phase Goal達成?"}
+    goal -->|CONTINUE| run
+    goal -->|GOAL_REACHED| verify{"Verification<br/>機械検証"}
+    verify -->|FAIL| run
+    verify -->|PASS| review{"Adversarial Review<br/>独立したContextでレビュー"}
+    review -->|FINDINGS| run
+    review -->|PASS| human{"Human Check<br/>成果物を操作・確認"}
+    human -->|FEEDBACK| feedback["Feedback保存"]
+    feedback --> run
+    human -->|ACCEPT| next{"次のPhaseあり?"}
+    next -->|あり| start
+    next -->|なし| complete["COMPLETED"]
 ```
+
+`init` はPhase開始まで、`run --until-ready` はHuman Check待ちまでを進めます。
+Human Checkは自動承認せず、`human-check` でACCEPTまたはFEEDBACKを入力します。
 
 * `initiative.json`、`state.json`、Phase定義を `work/<ID>/` に保存
 * RunごとにMarkdown CheckpointとAgentログを保存
@@ -43,15 +58,24 @@ dev-pipeline --help
 これは運用上の取り決めであり、CLIが自動で配置するものではありません。
 
 `--repo` の省略時はカレントディレクトリが使われ、指定したパスも保存されません。
-実装・検証・レビューの実行時には、再開時も含めて同じ `--repo` を明示してください。
+Planning・実装・検証・レビューの実行時には、再開時も含めて同じ `--repo` を明示してください。
 相対パスはCLIを起動したディレクトリから解決されるため、以下の例は同じディレクトリで実行します。
 
 ### 1. 自然言語の要求から開始
 
-Planningは人間の承認待ちで停止せず、Phase 1を即座に `running` にします。
+新規開発では、先に成果物用のディレクトリを作成し、Gitリポジトリとして初期化します。
+既存リポジトリを使う場合は作成不要で、以下の `--repo` をそのパスに置き換えます。
 
 ```bash
-dev-pipeline --repo . --agent codex init \
+mkdir -p work/INIT-001/repo
+git init work/INIT-001/repo
+```
+
+同じリポジトリを対象にPlanningします。Planningは人間の承認待ちで停止せず、
+Phase 1を即座に `running` にします。`init` 自体は成果物を実装しません。
+
+```bash
+dev-pipeline --repo work/INIT-001/repo --agent codex init \
   --id INIT-001 \
   --request "チームで使える軽量なタスク管理Webアプリを作る" \
   --constraint "SQLiteで動作すること"
@@ -61,22 +85,13 @@ Phaseを明示して再現性のある開始をする場合は、サンプル形
 Planning Agentを呼びません。
 
 ```bash
-dev-pipeline init --id INIT-001 \
+dev-pipeline --repo work/INIT-001/repo init --id INIT-001 \
   --goal "タスク管理アプリを完成させる" \
   --requirement "タスクを登録・完了できる" \
   --phase-file examples/phases.json
 ```
 
 ### 2. Agent Runを実行
-
-新規開発では、上記の `init` が完了してから成果物用のリポジトリを作成します。
-`init` はPlanningのみで成果物を実装しません。既存の `work/<ID>/` があると `init` が失敗するため、
-その配下の `repo/` を先に作成しないでください。既存リポジトリを使う場合、この作成手順は不要です。
-
-```bash
-mkdir -p work/INIT-001/repo
-git init work/INIT-001/repo
-```
 
 AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は指定した
 VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。

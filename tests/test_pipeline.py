@@ -8,6 +8,7 @@ from unittest.mock import patch
 from subprocess import CompletedProcess
 
 from dev_pipeline.agents import AgentResult, CommandAgent
+from dev_pipeline.cli import main
 from dev_pipeline.pipeline import Pipeline, TransitionError
 from dev_pipeline.store import WorkStore
 
@@ -44,6 +45,37 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual("PHASE_RUNNING", state.state)
         self.assertEqual("running", self.store.load_phase("phase-01").status)
         self.assertEqual("pending", self.store.load_phase("phase-02").status)
+
+    def test_init_with_prepared_repository(self):
+        store = WorkStore(self.root / "work", "NEW-001")
+        repo = store.path / "repo"
+        repo.mkdir(parents=True)
+        source = repo / "existing.txt"
+        source.write_text("keep this", encoding="utf-8")
+        plan = {"goal": "ship", "requirements": ["works"], "constraints": [], "phases": PHASES}
+        with patch("dev_pipeline.cli.CommandAgent.execute",
+                   return_value=AgentResult(plan, json.dumps(plan), "")) as execute:
+            with patch("builtins.print"):
+                result = main(["--work-dir", str(store.root), "--repo", str(repo),
+                               "--agent", "codex", "init", "--id", store.initiative_id,
+                               "--request", "ship a usable feature"])
+        self.assertEqual(0, result)
+        self.assertEqual(repo, execute.call_args.args[1])
+        self.assertEqual("PHASE_RUNNING", store.load_state().state)
+        self.assertEqual("keep this", source.read_text(encoding="utf-8"))
+
+    def test_initialize_does_not_overwrite_existing_initiative(self):
+        before = self.store.read_json("initiative.json")
+        with self.assertRaises(FileExistsError):
+            Pipeline.initialize(self.store, "replacement", [], [], PHASES)
+        self.assertEqual(before, self.store.read_json("initiative.json"))
+
+    def test_initialize_does_not_overwrite_partial_metadata(self):
+        store = WorkStore(self.root / "work", "PARTIAL-001")
+        (store.path / "phases").mkdir(parents=True)
+        with self.assertRaises(FileExistsError):
+            Pipeline.initialize(store, "ship", [], [], PHASES)
+        self.assertFalse((store.path / "initiative.json").exists())
 
     def test_continue_writes_checkpoint(self):
         agent = FakeAgent([{"result": "CONTINUE", "completed": ["core"], "remaining": ["UI"],
