@@ -176,7 +176,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(0, self.store.load_state().current_run)
         self.assertEqual("READY", pipeline.run_until_ready([("test", "unused")]))
 
-    def test_until_ready_uses_default_checks_when_none_provided(self):
+    def test_until_ready_uses_manifest_command_when_none_provided(self):
+        (self.root / "devpipeline-tests.json").write_text(
+            '{"command": "node --test"}', encoding="utf-8")
         agent = FakeAgent([
             {"result": "GOAL_REACHED", "completed": [], "remaining": [],
              "problems": [], "recommended_next_action": "verify"},
@@ -184,8 +186,9 @@ class PipelineTests(unittest.TestCase):
         ])
         pipeline = Pipeline(self.store, self.root, agent)
         with patch("dev_pipeline.pipeline.subprocess.run",
-                   return_value=CompletedProcess("check", 0, "ok", "")):
+                   return_value=CompletedProcess("check", 0, "ok", "")) as run:
             self.assertEqual("READY", pipeline.run_until_ready([]))
+        self.assertEqual("node --test", run.call_args.args[0])
         self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
 
     def test_accept_last_phase_completes_initiative(self):
@@ -228,7 +231,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual("READY", result)
         self.assertEqual("AWAITING_HUMAN_CHECK", store.load_state().state)
 
-    def test_run_uses_default_check_when_none_configured(self):
+    def test_run_uses_manifest_command_when_none_configured(self):
+        (self.root / "devpipeline-tests.json").write_text(
+            '{"command": "python -m unittest discover -s tests"}', encoding="utf-8")
         agent = FakeAgent([
             {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
              "problems": [], "recommended_next_action": "verify"},
@@ -238,7 +243,7 @@ class PipelineTests(unittest.TestCase):
         with patch("dev_pipeline.pipeline.subprocess.run",
                    return_value=CompletedProcess("check", 0, "ok", "")) as run:
             self.assertEqual("READY", pipeline.run([]))
-        self.assertIn("unittest", run.call_args.args[0])
+        self.assertEqual("python -m unittest discover -s tests", run.call_args.args[0])
         self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
 
     def test_run_explicit_checks_do_not_persist(self):
@@ -271,14 +276,13 @@ class PipelineTests(unittest.TestCase):
         evidence = store.read_json("evidence/phase-01-verification.json")
         self.assertEqual("PASS", evidence["overall"])
 
-    def test_verify_uses_default_check_when_nothing_configured(self):
+    def test_verify_fails_when_default_manifest_is_missing(self):
         pipeline = Pipeline(self.store, self.root, FakeAgent([]))
-        with patch("dev_pipeline.pipeline.subprocess.run",
-                   return_value=CompletedProcess("check", 0, "ok", "")) as run:
-            self.assertTrue(pipeline.verify([]))
-        self.assertIn("unittest", run.call_args.args[0])
-        self.assertEqual("PASS",
-                         self.store.read_json("evidence/phase-01-verification.json")["overall"])
+        self.assertFalse(pipeline.verify([]))
+        evidence = self.store.read_json("evidence/phase-01-verification.json")
+        self.assertEqual("FAIL", evidence["overall"])
+        self.assertEqual("manifest", evidence["checks"][0]["name"])
+        self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
 
 
 class AgentParsingTests(unittest.TestCase):

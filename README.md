@@ -101,20 +101,23 @@ python3 -m dev_pipeline.cli --repo work/INIT-001/repo init --id INIT-001 \
 AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は
 VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。
 
-機械検証はデフォルトで自動実行されます。未指定なら組み込みデフォルト
-`python3 -m unittest discover -s tests -v`（実装エージェントが `tests/` を書く前提）を使います。
+機械検証はデフォルトで自動実行されます。実装エージェント(run)は自動テストに加えて、リポジトリ直下に
+`devpipeline-tests.json` を書き、そこへ「テスト一式を実行するコマンド」を `{"command": "..."}` として
+宣言します。`--check`・`init --check` が無い場合、検証はこのマニフェストのコマンドを実行します
+（言語やフレームワークに依存しない）。マニフェストが無い・コマンドが無い場合は検証がFAILし、
+次のrunでエージェントがテストとマニフェストを用意します。
 
 * `--check 'NAME=COMMAND'` … そのrunだけ検証コマンドを差し替える（複数指定可）
-* `init --check 'NAME=COMMAND'` … イニシアチブに検証コマンドを登録し、以降のデフォルトにする
-  （Python以外のリポジトリや独自のlint/buildを回したい場合はこちら）
+* `init --check 'NAME=COMMAND'` … マニフェストに頼らず固定の検証コマンドを登録したい運用者向け
+  （イニシアチブのデフォルトになる。登録値はマニフェストより優先）
 * `--no-verify` … 機械検証をスキップし、レビューへ直行（opt-out）
 
 ```bash
-# 何も指定しなくても動く（デフォルト検証を使用）
+# 何も指定しなくても動く（エージェントが宣言するマニフェストのテストを実行）
 python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 \
   --until-ready
 
-# 別の検証に差し替えたい場合
+# 固定の検証コマンドを使いたい場合
 python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 \
   --until-ready \
   --check 'test=pytest -q' \

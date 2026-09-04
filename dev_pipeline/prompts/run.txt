@@ -16,7 +16,13 @@ Current progress and latest evidence (may refer to an earlier run):
 $context
 
 Inspect the current repository, implement and test as much as possible in this run. Do not ask
-the human about machine-checkable issues. At the very end, output exactly one JSON object (and
+the human about machine-checkable issues. Write an automated test suite covering this phase's
+acceptance criteria, using whatever language and test framework fits the repository. Also write
+a manifest file named $manifest_file at the repository root containing exactly one JSON object
+like {"command": "<shell command that runs the whole test suite>"}. The pipeline executes that
+command with the repository as the working directory to verify your work, so it must actually
+run the tests and exit non-zero when they fail. Do not use a no-op command and do not delete the
+manifest after creating it. At the very end, output exactly one JSON object (and
 nothing after it) with keys: result (CONTINUE or GOAL_REACHED), completed (string array),
 remaining (string array), problems (string array), recommended_next_action (string).
 Choose GOAL_REACHED only when every acceptance criterion is implemented and locally checked.

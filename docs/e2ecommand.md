@@ -15,7 +15,8 @@ python3 -m dev_pipeline.cli --agent antigravity init \
   --constraint "Pythonで実装し、追加ライブラリなしで動くこと"
 
 # 3) Agent Run（実装→検証→レビューまで自動継続）
-#    検証はデフォルトの `python3 -m unittest discover -s tests -v` が自動実行されるため指定不要。
+#    実装エージェントが自動テストと devpipeline-tests.json（実行コマンド宣言）を書き、
+#    検証がそのマニフェストのコマンドを実行する。指定は不要。
 #    独自検証を使うなら init の --check、または run の --check で差し替え。--no-verify でスキップ可。
 python3 -m dev_pipeline.cli --agent antigravity run CSV-AGY-01 --until-ready
 

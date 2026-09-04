@@ -16,8 +16,9 @@ class TransitionError(RuntimeError):
     pass
 
 
-# Used when neither --check nor registered (init --check) checks are available.
-DEFAULT_CHECKS = [("test", "python3 -m unittest discover -s tests -v")]
+# When neither --check nor registered (init --check) checks are available, verification
+# runs the command the implementation agent declares in this file at the repository root.
+TEST_MANIFEST_FILE = "devpipeline-tests.json"
 
 
 class Pipeline:
@@ -39,25 +40,35 @@ class Pipeline:
                                 checks=[tuple(check) for check in (checks or [])])
         store.create(initiative, phases)
 
+    def _manifest_command(self) -> str | None:
+        path = self.repository / TEST_MANIFEST_FILE
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        command = value.get("command") if isinstance(value, dict) else None
+        return command.strip() if isinstance(command, str) and command.strip() else None
+
     def _resolve_checks(self, checks: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """--check overrides registered checks; both default to the built-in test run."""
+        """--check overrides registered checks; both fall back to the test manifest."""
         if checks:
             return [tuple(check) for check in checks]
         stored = self.store.load_initiative().checks
         if stored:
             return [tuple(check) for check in stored]
-        return [tuple(check) for check in DEFAULT_CHECKS]
+        command = self._manifest_command()
+        return [("test", command)] if command else []
 
     def run(self, checks: list[tuple[str, str]], verify: bool = True) -> str:
         state = self.store.load_state()
         if state.state not in {"PHASE_RUNNING", "PHASE_FIXING"} or not state.current_phase:
             raise TransitionError(f"cannot run agent while state is {state.state}")
-        resolved = self._resolve_checks(checks)
+        prompt_checks = self._resolve_checks(checks) if verify else []
         state.current_run += 1
         self.store.save_state(state)
         initiative = self.store.load_initiative()
         phase = self.store.load_phase(state.current_phase)
-        prompt = self._run_prompt(initiative, phase, state, resolved if verify else [])
+        prompt = self._run_prompt(initiative, phase, state, prompt_checks)
         try:
             result = self.agent.execute(prompt, self.repository)
         except AgentError as error:
@@ -74,7 +85,8 @@ class Pipeline:
             state.state = "PHASE_REVIEWING"
             self.store.save_state(state)
             return "READY" if self.review() else "REVIEW_FINDINGS"
-        if not self.verify(resolved):
+        checks = self._resolve_checks(checks)
+        if not self.verify(checks):
             return "VERIFICATION_FAILED"
         return "READY" if self.review() else "REVIEW_FINDINGS"
 
@@ -98,9 +110,29 @@ class Pipeline:
         checks = self._resolve_checks(checks)
         state.state = "PHASE_VERIFYING"
         self.store.save_state(state)
+        phase_id = state.current_phase
         results = []
         overall = True
         logs = []
+        if not checks:
+            message = (
+                f"{TEST_MANIFEST_FILE} is missing or has no \"command\": the implementation "
+                "agent must create automated tests and that manifest so the default "
+                "verification can run them. Alternatively pass --check or register checks "
+                "with init --check."
+            )
+            results.append({"name": "manifest", "status": "FAIL",
+                            "command": f"read {TEST_MANIFEST_FILE}"})
+            logs.append(message)
+            overall = False
+            self.store.write_json(f"evidence/{phase_id}-verification.json", {
+                "phase_id": phase_id, "run_id": state.current_run,
+                "overall": "FAIL", "checks": results, "created_at": now_iso(),
+            })
+            self.store.write_text(f"evidence/{phase_id}-verification.log", message)
+            state.state = "PHASE_RUNNING"
+            self.store.save_state(state)
+            return False
         for name, command in checks:
             completed = subprocess.run(command, shell=True, cwd=self.repository, text=True,
                                        capture_output=True, check=False)
@@ -108,7 +140,6 @@ class Pipeline:
             overall &= completed.returncode == 0
             results.append({"name": name, "status": status, "command": command})
             logs.append(f"$ {command}\n{completed.stdout}{completed.stderr}")
-        phase_id = state.current_phase
         self.store.write_json(f"evidence/{phase_id}-verification.json", {
             "phase_id": phase_id, "run_id": state.current_run,
             "overall": "PASS" if overall else "FAIL", "checks": results,
@@ -215,6 +246,7 @@ class Pipeline:
             current_run=str(state.current_run),
             checks=str(checks),
             context=self._phase_context(phase),
+            manifest_file=TEST_MANIFEST_FILE,
         )
 
     def _review_prompt(self, initiative: Initiative, phase: Phase) -> str:
@@ -228,6 +260,7 @@ class Pipeline:
             scope=str(phase.scope),
             acceptance_criteria=str(phase.acceptance_criteria),
             context=self._phase_context(phase),
+            manifest_file=TEST_MANIFEST_FILE,
         )
 
     def _token_usage_format(self) -> str:

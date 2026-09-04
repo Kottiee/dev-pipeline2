@@ -23,10 +23,12 @@ class PromptRenderingTests(unittest.TestCase):
                             constraints="[]", phase_goal="pg", scope="['s']",
                             acceptance_criteria="['c']", feedback="none",
                             accepted_phases="[]", current_run="1",
-                            checks="[('t', 'pytest')]", context="none")
+                            checks="[('t', 'pytest')]", context="none",
+                            manifest_file="devpipeline-tests.json")
         review = render_prompt("review", repository="/repo", goal="g",
                                requirements="['r']", constraints="[]", phase_goal="pg",
-                               scope="['s']", acceptance_criteria="['c']", context="none")
+                               scope="['s']", acceptance_criteria="['c']", context="none",
+                               manifest_file="devpipeline-tests.json")
         self.assertIn("Work directly in repository: /repo", run)
         self.assertIn('result (CONTINUE or GOAL_REACHED)', run)
         self.assertIn("repository at /repo", review)
