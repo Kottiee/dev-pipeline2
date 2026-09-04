@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -86,6 +88,10 @@ class PipelineState:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def revision(self) -> str:
+        """Identify exactly the state a human inspected before making a decision."""
+        return hashlib.sha256(json.dumps(self.as_dict(), sort_keys=True).encode()).hexdigest()
 
 
 @dataclass
