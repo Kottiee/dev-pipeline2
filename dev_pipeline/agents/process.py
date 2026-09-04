@@ -15,6 +15,7 @@ class ProcessResult:
     stdout: str
     stderr: str
     log_path: Path | None
+    returncode: int = 0
 
 
 class ProcessRunner:
@@ -25,7 +26,8 @@ class ProcessRunner:
         self.log_dir = log_dir
 
     def run(self, command: list[str], prompt: str, repository: Path,
-            invocation: str | None = None, attempt: int = 1) -> ProcessResult:
+            invocation: str | None = None, attempt: int = 1,
+            check_returncode: bool = True) -> ProcessResult:
         repository = repository.resolve()
         env = os.environ.copy()
         env["PWD"] = str(repository)
@@ -42,7 +44,9 @@ class ProcessRunner:
                 "returncode": completed.returncode, "stdout": completed.stdout,
                 "stderr": completed.stderr,
             }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        if completed.returncode:
-            raise AgentError(f"{self.name} exited with {completed.returncode}: "
-                             f"{completed.stderr.strip()}", log_path)
-        return ProcessResult(completed.stdout, completed.stderr, log_path)
+        if check_returncode and completed.returncode:
+            detail = completed.stderr.strip()
+            detail_msg = f": {detail}" if detail else ""
+            raise AgentError(f"{self.name} exited with {completed.returncode}{detail_msg}", log_path)
+        return ProcessResult(completed.stdout, completed.stderr, log_path, completed.returncode)
+
