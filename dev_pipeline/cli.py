@@ -11,7 +11,8 @@ from .store import WorkStore
 
 
 def _agent(args: argparse.Namespace) -> CommandAgent:
-    return CommandAgent(args.agent, args.agent_command)
+    log_dir = WorkStore(Path(args.work_dir), args.id).path / "agent-logs"
+    return CommandAgent(args.agent, args.agent_command, log_dir=log_dir)
 
 
 def _checks(values: list[str]) -> list[tuple[str, str]]:

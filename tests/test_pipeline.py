@@ -114,6 +114,14 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(pipeline.review())
         self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
 
+    def test_pass_with_findings_is_not_accepted(self):
+        agent = FakeAgent([{"result": "PASS", "findings": [{"description": "broken"}]}])
+        pipeline = Pipeline(self.store, self.root, agent)
+        pipeline.verify([("ok", "python -c 'print(1)'")])
+        with self.assertRaisesRegex(ValueError, "PASS review must not contain findings"):
+            pipeline.review()
+        self.assertEqual("PHASE_REVIEWING", self.store.load_state().state)
+
     def test_feedback_starts_fix_run(self):
         state = self.store.load_state()
         state.state = "AWAITING_HUMAN_CHECK"

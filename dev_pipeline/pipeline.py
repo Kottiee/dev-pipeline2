@@ -106,6 +106,8 @@ class Pipeline:
             raise ValueError("review result must contain result=PASS|FINDINGS and findings array")
         if decision == "FINDINGS" and not findings:
             raise ValueError("FINDINGS review must include at least one finding")
+        if decision == "PASS" and findings:
+            raise ValueError("PASS review must not contain findings")
         self.store.write_json(f"evidence/{phase.id}-adversarial-review.json", {
             "phase_id": phase.id, "result": decision, "findings": findings,
             "created_at": now_iso(),
@@ -170,6 +172,8 @@ class Pipeline:
                     for phase_id in initiative.phase_order[:phase.sequence - 1]]
         return f"""You are the implementation agent for an autonomous development pipeline.
 Work directly in repository: {self.repository}
+Run commands with this repository as their working directory. Keep temporary verification
+files inside this repository and clean up your own temporary files afterwards.
 Initiative goal: {initiative.goal}
 Requirements: {initiative.requirements}
 Constraints: {initiative.constraints}
@@ -192,7 +196,9 @@ Choose GOAL_REACHED only when every acceptance criterion is implemented and loca
 
     def _review_prompt(self, initiative: Initiative, phase: Phase) -> str:
         return f"""Act as an adversarial reviewer, independent from the implementer. Inspect the
-repository at {self.repository} and find reasons to reject this phase. Do not modify files.
+repository at {self.repository} and find reasons to reject this phase. Do not modify source files.
+Run verification commands from this repository. If temporary test inputs are needed, create
+them inside this repository and clean up only those temporary inputs afterwards.
 Initiative goal: {initiative.goal}
 Requirements: {initiative.requirements}
 Constraints: {initiative.constraints}
@@ -204,6 +210,8 @@ Current progress and verification evidence:
 Output exactly one JSON object and nothing after it. Schema:
 {{"result":"PASS"|"FINDINGS","findings":[{{"severity":"high|medium|low","description":"...","recommendation":"..."}}]}}
 PASS is allowed only when there are no findings.
+Report concrete acceptance failures or regressions, not optional features outside this phase.
+Use valid JSON string escaping for quotes, backslashes, and newlines in descriptions.
 """
 
     @staticmethod

@@ -114,7 +114,33 @@ dev-pipeline --repo work/INIT-001/repo --agent codex run INIT-001 --until-ready 
 Codexの既定コマンドは `codex exec --sandbox workspace-write -` です。
 認証済みCodex CLIの設定を使用し、モデルは固定しません。
 
+OpenCodeでは同じコマンドの `--agent` を `opencode` に替えます。既定では
+`opencode run --format json --dir <repoの絶対パス>` を起動し、JSONイベントから
+最終回答だけを共通契約として取り出します。モデルはOpenCodeの設定を使用します。
+
+```bash
+dev-pipeline --repo work/INIT-001/repo --agent opencode run INIT-001 --until-ready \
+  --check 'test=python -m unittest discover -v'
+```
+
+OpenCodeの最終回答が不正JSONの場合は、同じセッションに内容を変えず再出力を求めます。
+権限拒否で回答前に終了した場合は、拒否を尊重し、許可範囲内の代替確認を促します。
+復帰は1呼び出しにつき合計2回までで、権限の自動承認や設定変更はしません。
+認証・API・プロセスエラーや復帰上限超過はログの場所を表示して停止します。
+必要な権限が本当に不足している場合は、運用側で内容を確認してください。
+
+各呼び出しのコマンド・Prompt・stdout・stderr・終了コードは、失敗分も含めて
+`work/<ID>/agent-logs/` に保存します。ログには要求やソース内容が含まれ得るため、
+共有時は内容を確認してください。検証済みのレビュー工程で停止した場合も、同じ
+`run --until-ready` コマンドで保存済み状態から再開できます。
+
+CLIオプションと権限の詳細は[OpenCode CLI](https://opencode.ai/docs/cli/)・
+[Permissions](https://opencode.ai/docs/permissions/)を参照してください。
+実機での復帰確認と新規E2Eの結果は[OpenCode実機検証](docs/opencode-e2e.md)に記録しています。
+
 AgentのCLI引数が環境と異なる場合はコマンドを差し替えられます。Promptはstdinに渡されます。
+`--agent-command` を指定した場合は共通の生JSON出力契約を使い、OpenCode固有の
+イベント抽出・セッション復帰は行いません。
 
 ```bash
 dev-pipeline --repo work/INIT-001/repo --agent codex \
@@ -149,6 +175,7 @@ work/INIT-001/
 ├── initiative.json
 ├── state.json
 ├── repo/                         # 新規開発の成果物（運用で作成。外部配置も可）
+├── agent-logs/                   # Planning・Run・Reviewの全呼び出し（失敗・復帰分も保存）
 ├── phases/                       # Phase契約
 ├── runs/                         # Run Checkpoint
 ├── feedback/                     # ACCEPT / FEEDBACK
@@ -191,7 +218,9 @@ work/INIT-001/
 }
 ```
 
-CLIはAgentの途中出力を許容しますが、stdout末尾は必ず単一のJSON objectである必要があります。
+Agentの最終回答は単一のJSON objectである必要があります。既定のOpenCodeアダプターは
+CLIのJSONイベントから最終回答を抽出します。Codexおよび `--agent-command` の出力では、
+stdout末尾が単一のJSON objectである必要があります（途中出力は許容）。
 
 ## 開発時の検証
 
