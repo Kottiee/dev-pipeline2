@@ -81,6 +81,38 @@ def _extract_codex_usage(output: str | None) -> dict[str, int] | None:
     return summarize_token_usage(usages) if usages else None
 
 
+def _extract_antigravity_usage(output: str | None) -> dict[str, int] | None:
+    usage = None
+    for line in (output or "").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "result":
+            continue
+        payload = event.get("result")
+        if not isinstance(payload, dict):
+            continue
+        candidate = payload.get("usage")
+        if isinstance(candidate, dict):
+            usage = candidate
+    if not isinstance(usage, dict):
+        return None
+    normalized = {
+        "input_tokens": usage.get("input_tokens", 0),
+        "cached_input_tokens": usage.get("cache_read_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+        "reasoning_output_tokens": usage.get("thinking_tokens", 0),
+    }
+    if not all(_valid_count(value) for value in normalized.values()):
+        return None
+    normalized["total_tokens"] = normalized["input_tokens"] + normalized["output_tokens"]
+    normalized["reported_invocations"] = 1
+    return normalized
+
+
 def _extract_opencode_usage(output: str | None) -> dict[str, int] | None:
     steps = []
     for line in (output or "").splitlines():
@@ -113,6 +145,7 @@ def _extract_opencode_usage(output: str | None) -> dict[str, int] | None:
 TOKEN_USAGE_EXTRACTORS: dict[str, Any] = {
     "codex": _extract_codex_usage,
     "opencode": _extract_opencode_usage,
+    "antigravity": _extract_antigravity_usage,
 }
 
 

@@ -88,6 +88,31 @@ class UsageExtractionTests(unittest.TestCase):
         output = json.dumps({"type": "step_finish", "part": {"tokens": {"input": -1}}})
         self.assertIsNone(extract_token_usage(output, "opencode"))
 
+    def test_antigravity_maps_result_usage_fields(self):
+        usage = {"input_tokens": 100, "output_tokens": 20,
+                 "thinking_tokens": 5, "cache_read_tokens": 50, "total_tokens": 120}
+        result = {"conversation_id": "cid", "status": "SUCCESS", "response": "ok",
+                  "usage": usage}
+        output = "\n".join(json.dumps(event) for event in [
+            {"event": "init", "conversation_id": "cid", "init": {}},
+            {"event": "step_update", "step_update": {"text_delta": "partial"}},
+            {"event": "result", "result": result},
+        ])
+        parsed = extract_token_usage(output, "antigravity")
+        self.assertEqual(100, parsed["input_tokens"])
+        self.assertEqual(50, parsed["cached_input_tokens"])
+        self.assertEqual(20, parsed["output_tokens"])
+        self.assertEqual(5, parsed["reasoning_output_tokens"])
+        self.assertEqual(120, parsed["total_tokens"])
+        self.assertEqual(1, parsed["reported_invocations"])
+
+    def test_antigravity_ignores_invalid_usage(self):
+        result = {"status": "SUCCESS", "response": "ok",
+                  "usage": {"input_tokens": "bad", "output_tokens": 20}}
+        output = json.dumps({"event": "result", "result": result})
+        self.assertIsNone(extract_token_usage(output, "antigravity"))
+        self.assertIsNone(extract_token_usage(json.dumps({"event": "init"}), "antigravity"))
+
     def test_summarize_recomputes_total_and_ignores_bad_rows(self):
         summary = summarize_token_usage([
             {"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 5,
@@ -127,6 +152,7 @@ class UsageExtractionTests(unittest.TestCase):
     def test_adapters_declare_output_formats(self):
         self.assertEqual("codex", create_agent("codex").token_usage_format)
         self.assertEqual("opencode", create_agent("opencode").token_usage_format)
+        self.assertEqual("antigravity", create_agent("antigravity").token_usage_format)
         self.assertEqual("codex", create_agent("command", "other-cli").token_usage_format)
 
 

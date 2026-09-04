@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from .base import Agent, AgentError, AgentResult
+from .antigravity import AntigravityAgent
 from .codex import CodexAgent
 from .command import CommandAgent
 from .opencode import OpenCodeAgent
@@ -13,6 +14,7 @@ from .opencode import OpenCodeAgent
 AGENT_FACTORIES: dict[str, Callable[[str | None, Path | None], Agent]] = {
     "codex": CodexAgent,
     "opencode": OpenCodeAgent,
+    "antigravity": AntigravityAgent,
     "command": CommandAgent,
 }
 

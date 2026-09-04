@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dev_pipeline.agents import (
-    AGENT_FACTORIES, AgentResult, CodexAgent, CommandAgent, OpenCodeAgent, create_agent,
+    AGENT_FACTORIES, AgentResult, AntigravityAgent, CodexAgent, CommandAgent,
+    OpenCodeAgent, create_agent,
 )
 from dev_pipeline.cli import main
 from dev_pipeline.store import WorkStore
@@ -21,6 +22,7 @@ class AdapterSelectionTests(unittest.TestCase):
     def test_builtins_are_separate_adapters(self):
         self.assertIsInstance(create_agent("codex"), CodexAgent)
         self.assertIsInstance(create_agent("opencode"), OpenCodeAgent)
+        self.assertIsInstance(create_agent("antigravity"), AntigravityAgent)
         self.assertIsInstance(create_agent("command", "other-cli"), CommandAgent)
 
     def test_unknown_cli_with_command_uses_generic_adapter(self):
