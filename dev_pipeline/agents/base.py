@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 class AgentError(RuntimeError):
     def __init__(self, message: str, log_path: Path | None = None):
+        self.log_path = log_path
         suffix = f" (agent log: {log_path})" if log_path else ""
         super().__init__(message + suffix)
 

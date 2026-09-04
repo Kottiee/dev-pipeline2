@@ -21,6 +21,7 @@ class OpenCodeAgent:
     def __init__(self, command: str | None = None, log_dir: Path | None = None):
         self.command = command or "opencode run"
         self.runner = ProcessRunner("opencode", log_dir)
+        self.token_usage_format = "opencode"
 
     def execute(self, prompt: str, repository: Path) -> AgentResult:
         repository = repository.resolve()

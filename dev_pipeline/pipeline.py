@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from .agents.base import Agent
+from .agents.base import Agent, AgentError
 from .models import Initiative, Phase, PipelineState, RunOutcome, now_iso
 from .store import WorkStore
+from .usage import DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage
 
 
 class TransitionError(RuntimeError):
@@ -39,7 +41,12 @@ class Pipeline:
         initiative = self.store.load_initiative()
         phase = self.store.load_phase(state.current_phase)
         prompt = self._run_prompt(initiative, phase, state, checks)
-        result = self.agent.execute(prompt, self.repository)
+        try:
+            result = self.agent.execute(prompt, self.repository)
+        except AgentError as error:
+            self._record_failure_usage("run", phase.id, state.current_run, error)
+            raise
+        self._record_usage("run", phase.id, state.current_run, result.stdout)
         outcome = RunOutcome.from_dict(result.data)
         run_id = f"run-{state.current_run:03d}"
         self.store.write_text(f"runs/{phase.id}-{run_id}.md", self._checkpoint(phase, outcome))
@@ -99,7 +106,12 @@ class Pipeline:
             raise TransitionError("review requires successful verification")
         phase = self.store.load_phase(state.current_phase)
         initiative = self.store.load_initiative()
-        result = self.agent.execute(self._review_prompt(initiative, phase), self.repository)
+        try:
+            result = self.agent.execute(self._review_prompt(initiative, phase), self.repository)
+        except AgentError as error:
+            self._record_failure_usage("review", phase.id, state.current_run, error)
+            raise
+        self._record_usage("review", phase.id, state.current_run, result.stdout)
         decision = result.data.get("result")
         findings = result.data.get("findings", [])
         if decision not in {"PASS", "FINDINGS"} or not isinstance(findings, list):
@@ -213,6 +225,40 @@ PASS is allowed only when there are no findings.
 Report concrete acceptance failures or regressions, not optional features outside this phase.
 Use valid JSON string escaping for quotes, backslashes, and newlines in descriptions.
 """
+
+    def _token_usage_format(self) -> str:
+        return getattr(self.agent, "token_usage_format", DEFAULT_TOKEN_USAGE_FORMAT)
+
+    def _record_usage(self, stage: str, phase_id: str, run_number: int,
+                      output: str) -> None:
+        usage = extract_token_usage(output, self._token_usage_format())
+        if usage is None:
+            return
+        self.store.record_usage_event({
+            "stage": stage, "phase": phase_id, "run": run_number,
+            "usage": usage, "recorded_at": now_iso(),
+        })
+
+    def _record_failure_usage(self, stage: str, phase_id: str, run_number: int,
+                              error: AgentError) -> None:
+        if error.log_path is None:
+            return
+        prefix = error.log_path.name.rsplit("-", 1)[0]
+        outputs = []
+        paths = sorted(
+            error.log_path.parent.glob(f"{prefix}-*.json"),
+            key=lambda path: int(path.name.rsplit("-", 1)[1].rsplit(".", 1)[0]),
+        )
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            stdout = payload.get("stdout") if isinstance(payload, dict) else None
+            if isinstance(stdout, str) and stdout:
+                outputs.append(stdout)
+        if outputs:
+            self._record_usage(stage, phase_id, run_number, "\n".join(outputs))
 
     @staticmethod
     def _checkpoint(phase: Phase, outcome: RunOutcome) -> str:

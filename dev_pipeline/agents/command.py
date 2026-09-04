@@ -16,6 +16,7 @@ class CommandAgent:
             raise ValueError(f"agent {name!r} requires --agent-command")
         self.command = command
         self.runner = ProcessRunner(name, log_dir)
+        self.token_usage_format = "codex"
 
     def execute(self, prompt: str, repository: Path) -> AgentResult:
         result = self.runner.run(shlex.split(self.command), prompt, repository)

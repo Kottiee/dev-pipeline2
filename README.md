@@ -42,10 +42,12 @@ Human Checkは自動承認せず、`human-check` でACCEPTまたはFEEDBACKを�
 * Python 3.11以上
 * 利用するAgent CLI (`codex` または `opencode`) とその認証
 
-インストールせずに `python -m dev_pipeline.cli` でも実行できます。CLIコマンドとして導入する場合：
+以降の例はインストール不要のモジュール実行形式 `python3 -m dev_pipeline.cli` で表記します。
+リポジトリルートから実行してください（`--repo` 等の相対パスは起動ディレクトリ基準のため）。
+導入して `dev-pipeline` コマンドとして使いたい場合：
 
 ```bash
-python -m pip install -e .
+python3 -m pip install -e .
 dev-pipeline --help
 ```
 
@@ -75,7 +77,7 @@ git init work/INIT-001/repo
 Phase 1を即座に `running` にします。`init` 自体は成果物を実装しません。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent codex init \
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex init \
   --id INIT-001 \
   --request "チームで使える軽量なタスク管理Webアプリを作る" \
   --constraint "SQLiteで動作すること"
@@ -85,7 +87,7 @@ Phaseを明示して再現性のある開始をする場合は、サンプル形
 Planning Agentを呼びません。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo init --id INIT-001 \
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo init --id INIT-001 \
   --goal "タスク管理アプリを完成させる" \
   --requirement "タスクを登録・完了できる" \
   --phase-file examples/phases.json
@@ -97,9 +99,9 @@ AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返し�
 VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent codex run INIT-001 \
-  --check 'test=python -m unittest discover -v' \
-  --check 'build=python -m build'
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 \
+  --check 'test=python3 -m unittest discover -v' \
+  --check 'build=python3 -m build'
 ```
 
 Human Checkまで自律的に継続する場合は `--until-ready` を指定します。`CONTINUE`、検証失敗、
@@ -107,8 +109,8 @@ Human Checkまで自律的に継続する場合は `--until-ready` を指定し�
 Human Checkは自動承認しません。Agentプロセス自体の起動・認証エラーは報告して終了します。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent codex run INIT-001 --until-ready \
-  --check 'test=python -m unittest discover -v'
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 --until-ready \
+  --check 'test=python3 -m unittest discover -v'
 ```
 
 Codexの既定コマンドは `codex exec --sandbox workspace-write -` です。
@@ -119,8 +121,8 @@ OpenCodeでは同じコマンドの `--agent` を `opencode` に替えます。�
 最終回答だけを共通契約として取り出します。モデルはOpenCodeの設定を使用します。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent opencode run INIT-001 --until-ready \
-  --check 'test=python -m unittest discover -v'
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent opencode run INIT-001 --until-ready \
+  --check 'test=python3 -m unittest discover -v'
 ```
 
 OpenCodeの最終回答が不正JSONの場合は、同じセッションに内容を変えず再出力を求めます。
@@ -146,7 +148,7 @@ OpenCode用のコマンドには `--format`・`--dir`・`--session` を含めず
 以前の `--agent opencode --agent-command '生JSONを返す独自CLI'` も、この指定に変更してください。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent codex \
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex \
   --agent-command 'codex exec --sandbox workspace-write -' run INIT-001 \
   --check 'test=pytest -q'
 ```
@@ -154,21 +156,24 @@ dev-pipeline --repo work/INIT-001/repo --agent codex \
 ### 3. 状態確認とHuman Check
 
 ```bash
-dev-pipeline status INIT-001
+python3 -m dev_pipeline.cli status INIT-001
+
+# 人間可読な要約（トークン使用量の総数・内訳も表示）
+python3 -m dev_pipeline.cli show INIT-001
 
 # 成果物を操作して問題がなければ次Phaseへ
-dev-pipeline human-check INIT-001 ACCEPT
+python3 -m dev_pipeline.cli human-check INIT-001 ACCEPT
 
 # 修正が必要なら同じPhaseを継続
-dev-pipeline human-check INIT-001 FEEDBACK \
+python3 -m dev_pipeline.cli human-check INIT-001 FEEDBACK \
   --feedback "検索後に戻っても条件を保持してほしい"
 ```
 
 検証とレビューはトラブルシュート用に個別実行もできます。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo verify INIT-001 --check 'test=python -m unittest discover -v'
-dev-pipeline --repo work/INIT-001/repo --agent codex review INIT-001
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo verify INIT-001 --check 'test=python3 -m unittest discover -v'
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex review INIT-001
 ```
 
 ## 永続化レイアウト
@@ -177,6 +182,7 @@ dev-pipeline --repo work/INIT-001/repo --agent codex review INIT-001
 work/INIT-001/
 ├── initiative.json
 ├── state.json
+├── usage.json                     # 実行ごとのトークン使用量eventsと案件全体の累計
 ├── repo/                         # 新規開発の成果物（運用で作成。外部配置も可）
 ├── agent-logs/                   # Planning・Run・Reviewの全呼び出し（失敗・復帰分も保存）
 ├── phases/                       # Phase契約
@@ -225,6 +231,36 @@ Agentの最終回答は単一のJSON objectである必要があります。既�
 CLIのJSONイベントから最終回答を抽出します。Codexおよび汎用commandアダプターの出力では、
 stdout末尾が単一のJSON objectである必要があります（途中出力は許容）。
 
+## トークン使用量の記録
+
+Agentの実行ログ（stdoutのJSONL）からトークン使用量を抽出し、`usage.json` に実行単位の
+eventsとして追記したうえで、案件全体の累計を毎回の保存時にeventsから再集計します。
+累計を加算で持ち回らないため、再保存や再開で同一実行を重複計上しません。
+
+* 収集元: Codexは `turn.completed.usage`、OpenCodeは `step_finish.part.tokens`
+* 共通項目: input / cached_input / output / reasoning_output / total / reported_invocations
+  * `total`は `input + output`。cached・reasoningは内訳であり二重加算しない
+* 正規化: OpenCodeはinputにcache read/write、outputにreasoningを加算し、1実行内の複数
+  stepを合算する。Codexの複数 `turn.completed` も1実行分に合算する
+* 記録対象: Planning（`init`のAI計画）、各 `run`、`review` の成功実行に加え、停止した
+  実行（`AgentError`）も保存済み `agent-logs/` からstdoutを回収して計上する
+* 不正・欠損: 非JSON行・不正な使用量イベントは無視。欠損は0、負数・整数以外・真偽値は
+  不正扱い。有効なイベントがなければその実行は未取得（記録しない）
+* 表示: `show INIT-001` が総数と内訳を桁区切りで表示。`reported_invocations`が0なら
+  `Token usage: unavailable`
+
+```bash
+python3 -m dev_pipeline.cli --agent opencode --token-usage-format opencode run INIT-001 ...
+python3 -m dev_pipeline.cli show INIT-001
+```
+
+抽出形式は明示の `--token-usage-format` が最優先で、未指定なら各アダプターの形式
+（codex / opencode）へ、未知の明示値は起動前に拒否されます。新しい出力形式は
+`usage.TOKEN_USAGE_EXTRACTORS` への抽出関数登録で追加できます。
+
+互換上の注意: `reported_invocations` はCodexでは有効な完了イベント数、OpenCodeでは
+使用量を取得できた実行数です。料金換算は行いません。
+
 ## Agentの追加・差し替え
 
 PipelineとPlanningは `Agent.execute(prompt, repository) -> AgentResult` だけに依存します。
@@ -243,9 +279,9 @@ dev_pipeline/agents/
 新しいCLIが共通の生JSON契約を満たす場合は、実装を追加せずに利用できます。
 
 ```bash
-dev-pipeline --repo work/INIT-001/repo --agent command \
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent command \
   --agent-command 'my-agent run' run INIT-001 --until-ready \
-  --check 'test=python -m unittest discover -v'
+  --check 'test=python3 -m unittest discover -v'
 ```
 
 独自形式のCLIは、`execute`を持つアダプターを追加し、`AGENT_FACTORIES`に名前と
@@ -256,6 +292,6 @@ CLI以外のAgentも`AgentResult`を返すだけで接続できます。継承�
 ## 開発時の検証
 
 ```bash
-python -m unittest discover -v
-python -m compileall -q dev_pipeline tests
+python3 -m unittest discover -v
+python3 -m compileall -q dev_pipeline tests
 ```
