@@ -7,12 +7,17 @@ from typing import Any
 
 from .agents.base import Agent, AgentError
 from .models import Initiative, Phase, PipelineState, RunOutcome, now_iso
+from .prompts import render_prompt
 from .store import WorkStore
 from .usage import DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage
 
 
 class TransitionError(RuntimeError):
     pass
+
+
+# Used when neither --check nor registered (init --check) checks are available.
+DEFAULT_CHECKS = [("test", "python3 -m unittest discover -s tests -v")]
 
 
 class Pipeline:
@@ -25,22 +30,34 @@ class Pipeline:
     def initialize(
         store: WorkStore, goal: str, requirements: list[str], constraints: list[str],
         phase_specs: list[dict[str, Any]],
+        checks: list[tuple[str, str]] | None = None,
     ) -> None:
         phases = [Phase(id=f"phase-{index:02d}", sequence=index, **spec)
                   for index, spec in enumerate(phase_specs, 1)]
         initiative = Initiative(store.initiative_id, goal, requirements, constraints,
-                                [phase.id for phase in phases])
+                                [phase.id for phase in phases],
+                                checks=[tuple(check) for check in (checks or [])])
         store.create(initiative, phases)
 
-    def run(self, checks: list[tuple[str, str]]) -> str:
+    def _resolve_checks(self, checks: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """--check overrides registered checks; both default to the built-in test run."""
+        if checks:
+            return [tuple(check) for check in checks]
+        stored = self.store.load_initiative().checks
+        if stored:
+            return [tuple(check) for check in stored]
+        return [tuple(check) for check in DEFAULT_CHECKS]
+
+    def run(self, checks: list[tuple[str, str]], verify: bool = True) -> str:
         state = self.store.load_state()
         if state.state not in {"PHASE_RUNNING", "PHASE_FIXING"} or not state.current_phase:
             raise TransitionError(f"cannot run agent while state is {state.state}")
+        resolved = self._resolve_checks(checks)
         state.current_run += 1
         self.store.save_state(state)
         initiative = self.store.load_initiative()
         phase = self.store.load_phase(state.current_phase)
-        prompt = self._run_prompt(initiative, phase, state, checks)
+        prompt = self._run_prompt(initiative, phase, state, resolved if verify else [])
         try:
             result = self.agent.execute(prompt, self.repository)
         except AgentError as error:
@@ -53,30 +70,32 @@ class Pipeline:
         self.store.write_text(f"evidence/{phase.id}-{run_id}-agent.log", result.stdout + result.stderr)
         if outcome.result == "CONTINUE":
             return "CONTINUE"
-        if not checks:
-            raise TransitionError("at least one verification check is required before review")
-        if not self.verify(checks):
+        if not verify:
+            state.state = "PHASE_REVIEWING"
+            self.store.save_state(state)
+            return "READY" if self.review() else "REVIEW_FINDINGS"
+        if not self.verify(resolved):
             return "VERIFICATION_FAILED"
         return "READY" if self.review() else "REVIEW_FINDINGS"
 
-    def run_until_ready(self, checks: list[tuple[str, str]]) -> str:
-        if not checks:
-            raise TransitionError("at least one verification check is required before review")
+    def run_until_ready(self, checks: list[tuple[str, str]], verify: bool = True) -> str:
+        resolved = self._resolve_checks(checks)
         while True:
             state = self.store.load_state()
             if state.state == "AWAITING_HUMAN_CHECK":
                 return "READY"
             if state.state == "PHASE_VERIFYING":
-                self.verify(checks)
+                self.verify(resolved)
             elif state.state == "PHASE_REVIEWING":
                 self.review()
-            elif self.run(checks) == "READY":
+            elif self.run(resolved, verify=verify) == "READY":
                 return "READY"
 
     def verify(self, checks: list[tuple[str, str]]) -> bool:
         state = self.store.load_state()
         if not state.current_phase:
             raise TransitionError("there is no current phase")
+        checks = self._resolve_checks(checks)
         state.state = "PHASE_VERIFYING"
         self.store.save_state(state)
         results = []
@@ -182,49 +201,34 @@ class Pipeline:
         feedback = feedback_files[-1].read_text(encoding="utf-8") if feedback_files else "none"
         accepted = [self.store.load_phase(phase_id).as_dict()
                     for phase_id in initiative.phase_order[:phase.sequence - 1]]
-        return f"""You are the implementation agent for an autonomous development pipeline.
-Work directly in repository: {self.repository}
-Run commands with this repository as their working directory. Keep temporary verification
-files inside this repository and clean up your own temporary files afterwards.
-Initiative goal: {initiative.goal}
-Requirements: {initiative.requirements}
-Constraints: {initiative.constraints}
-Phase: {phase.goal}
-Scope: {phase.scope}
-Acceptance criteria: {phase.acceptance_criteria}
-Latest human feedback: {feedback}
-Previously accepted phases: {accepted}
-Current run: {state.current_run}
-Verification commands (run in the repository): {checks}
-Current progress and latest evidence (may refer to an earlier run):
-{self._phase_context(phase)}
-
-Inspect the current repository, implement and test as much as possible in this run. Do not ask
-the human about machine-checkable issues. At the very end, output exactly one JSON object (and
-nothing after it) with keys: result (CONTINUE or GOAL_REACHED), completed (string array),
-remaining (string array), problems (string array), recommended_next_action (string).
-Choose GOAL_REACHED only when every acceptance criterion is implemented and locally checked.
-"""
+        return render_prompt(
+            "run",
+            repository=str(self.repository),
+            goal=initiative.goal,
+            requirements=str(initiative.requirements),
+            constraints=str(initiative.constraints),
+            phase_goal=phase.goal,
+            scope=str(phase.scope),
+            acceptance_criteria=str(phase.acceptance_criteria),
+            feedback=feedback,
+            accepted_phases=str(accepted),
+            current_run=str(state.current_run),
+            checks=str(checks),
+            context=self._phase_context(phase),
+        )
 
     def _review_prompt(self, initiative: Initiative, phase: Phase) -> str:
-        return f"""Act as an adversarial reviewer, independent from the implementer. Inspect the
-repository at {self.repository} and find reasons to reject this phase. Do not modify source files.
-Run verification commands from this repository. If temporary test inputs are needed, create
-them inside this repository and clean up only those temporary inputs afterwards.
-Initiative goal: {initiative.goal}
-Requirements: {initiative.requirements}
-Constraints: {initiative.constraints}
-Phase goal: {phase.goal}
-Scope: {phase.scope}
-Acceptance criteria: {phase.acceptance_criteria}
-Current progress and verification evidence:
-{self._phase_context(phase)}
-Output exactly one JSON object and nothing after it. Schema:
-{{"result":"PASS"|"FINDINGS","findings":[{{"severity":"high|medium|low","description":"...","recommendation":"..."}}]}}
-PASS is allowed only when there are no findings.
-Report concrete acceptance failures or regressions, not optional features outside this phase.
-Use valid JSON string escaping for quotes, backslashes, and newlines in descriptions.
-"""
+        return render_prompt(
+            "review",
+            repository=str(self.repository),
+            goal=initiative.goal,
+            requirements=str(initiative.requirements),
+            constraints=str(initiative.constraints),
+            phase_goal=phase.goal,
+            scope=str(phase.scope),
+            acceptance_criteria=str(phase.acceptance_criteria),
+            context=self._phase_context(phase),
+        )
 
     def _token_usage_format(self) -> str:
         return getattr(self.agent, "token_usage_format", DEFAULT_TOKEN_USAGE_FORMAT)

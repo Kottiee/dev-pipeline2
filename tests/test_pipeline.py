@@ -176,11 +176,17 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(0, self.store.load_state().current_run)
         self.assertEqual("READY", pipeline.run_until_ready([("test", "unused")]))
 
-    def test_until_ready_requires_checks_before_agent_execution(self):
-        pipeline = Pipeline(self.store, self.root, FakeAgent([]))
-        with self.assertRaises(TransitionError):
-            pipeline.run_until_ready([])
-        self.assertEqual(0, self.store.load_state().current_run)
+    def test_until_ready_uses_default_checks_when_none_provided(self):
+        agent = FakeAgent([
+            {"result": "GOAL_REACHED", "completed": [], "remaining": [],
+             "problems": [], "recommended_next_action": "verify"},
+            {"result": "PASS", "findings": []},
+        ])
+        pipeline = Pipeline(self.store, self.root, agent)
+        with patch("dev_pipeline.pipeline.subprocess.run",
+                   return_value=CompletedProcess("check", 0, "ok", "")):
+            self.assertEqual("READY", pipeline.run_until_ready([]))
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
 
     def test_accept_last_phase_completes_initiative(self):
         state = self.store.load_state()
@@ -208,6 +214,71 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("preserve existing behavior", agent.prompts[0])
         self.assertIn("usable feature", agent.prompts[0])
         self.assertIn("'status': 'accepted'", agent.prompts[0])
+
+    def test_stored_checks_are_used_when_run_omits_checks(self):
+        store = WorkStore(self.root / "work", "STORED-001")
+        Pipeline.initialize(store, "ship", ["works"], [], PHASES,
+                            checks=[("test", "python -c 'print(1)'")])
+        agent = FakeAgent([
+            {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
+             "problems": [], "recommended_next_action": "verify"},
+            {"result": "PASS", "findings": []},
+        ])
+        result = Pipeline(store, self.root, agent).run([])
+        self.assertEqual("READY", result)
+        self.assertEqual("AWAITING_HUMAN_CHECK", store.load_state().state)
+
+    def test_run_uses_default_check_when_none_configured(self):
+        agent = FakeAgent([
+            {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
+             "problems": [], "recommended_next_action": "verify"},
+            {"result": "PASS", "findings": []},
+        ])
+        pipeline = Pipeline(self.store, self.root, agent)
+        with patch("dev_pipeline.pipeline.subprocess.run",
+                   return_value=CompletedProcess("check", 0, "ok", "")) as run:
+            self.assertEqual("READY", pipeline.run([]))
+        self.assertIn("unittest", run.call_args.args[0])
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
+
+    def test_run_explicit_checks_do_not_persist(self):
+        outcome = {"result": "CONTINUE", "completed": ["core"], "remaining": ["UI"],
+                   "problems": [], "recommended_next_action": "build UI"}
+        agent = FakeAgent([outcome])
+        pipeline = Pipeline(self.store, self.root, agent)
+        pipeline.run([("lint", "flake8")])
+        self.assertEqual([], self.store.load_initiative().checks)
+
+    def test_run_no_verify_skips_verification_and_goes_to_review(self):
+        agent = FakeAgent([
+            {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
+             "problems": [], "recommended_next_action": "review"},
+            {"result": "PASS", "findings": []},
+        ])
+        pipeline = Pipeline(self.store, self.root, agent)
+        with patch("dev_pipeline.pipeline.subprocess.run") as run:
+            self.assertEqual("READY", pipeline.run([], verify=False))
+        run.assert_not_called()
+        self.assertFalse((self.store.path / "evidence/phase-01-verification.json").exists())
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
+
+    def test_verify_uses_stored_checks_when_given_empty(self):
+        store = WorkStore(self.root / "work", "VERIFY-001")
+        Pipeline.initialize(store, "ship", ["works"], [], PHASES,
+                            checks=[("test", "python -c 'print(1)'")])
+        pipeline = Pipeline(store, self.root, FakeAgent([]))
+        self.assertTrue(pipeline.verify([]))
+        evidence = store.read_json("evidence/phase-01-verification.json")
+        self.assertEqual("PASS", evidence["overall"])
+
+    def test_verify_uses_default_check_when_nothing_configured(self):
+        pipeline = Pipeline(self.store, self.root, FakeAgent([]))
+        with patch("dev_pipeline.pipeline.subprocess.run",
+                   return_value=CompletedProcess("check", 0, "ok", "")) as run:
+            self.assertTrue(pipeline.verify([]))
+        self.assertIn("unittest", run.call_args.args[0])
+        self.assertEqual("PASS",
+                         self.store.read_json("evidence/phase-01-verification.json")["overall"])
 
 
 class AgentParsingTests(unittest.TestCase):

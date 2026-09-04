@@ -9,6 +9,7 @@ from .agents import AgentError, create_agent
 from .agents.base import Agent
 from .models import now_iso
 from .pipeline import Pipeline, TransitionError
+from .prompts import render_prompt
 from .store import WorkStore
 from .usage import (
     DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage, format_token_usage,
@@ -35,7 +36,13 @@ def _checks(values: list[str]) -> list[tuple[str, str]]:
     return parsed
 
 
-def _plan(args: argparse.Namespace, agent: Agent) -> tuple[str, list[str], list[str], list[dict], str | None]:
+def _repository(store: WorkStore, repo: str | None) -> Path:
+    if repo is not None:
+        return Path(repo)
+    return store.path / "repo"
+
+
+def _plan(args: argparse.Namespace, agent: Agent, repository: Path) -> tuple[str, list[str], list[str], list[dict], str | None]:
     if args.phase_file:
         phases = json.loads(Path(args.phase_file).read_text(encoding="utf-8"))
         if not isinstance(phases, list) or not phases:
@@ -44,18 +51,10 @@ def _plan(args: argparse.Namespace, agent: Agent) -> tuple[str, list[str], list[
     request = args.request or args.goal
     if not request:
         raise ValueError("--request or --goal is required")
-    prompt = f"""Turn this human request into an actionable initiative and one or more human-reviewable
-phases. Do not implement anything. Request: {request}
-Additional requirements: {args.requirement}
-Constraints: {args.constraint}
-Output exactly one JSON object and nothing after it with this schema:
-{{"goal":"...","requirements":["..."],"constraints":["..."],"phases":[{{"goal":"...","scope":["..."],"acceptance_criteria":["..."]}}]}}
-Every phase must be independently runnable and reviewable. Do not create work items.
-Use the smallest number of meaningful human-review units. A small request may be one phase.
-Do not split individual implementation steps or tests into separate phases
-when they belong to the same usable outcome.
-"""
-    result = agent.execute(prompt, Path(args.repo))
+    prompt = render_prompt("planner", request=request,
+                           requirement=str(args.requirement),
+                           constraint=str(args.constraint))
+    result = agent.execute(prompt, repository)
     data = result.data
     keys = {"goal", "requirements", "constraints", "phases"}
     if not keys.issubset(data) or not isinstance(data["phases"], list) or not data["phases"]:
@@ -66,7 +65,8 @@ when they belong to the same usable outcome.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev-pipeline", description="Phase-oriented AI development pipeline")
     parser.add_argument("--work-dir", default="work", help="pipeline state directory")
-    parser.add_argument("--repo", default=".", help="repository agents and checks operate in")
+    parser.add_argument("--repo", default=None,
+                        help="repository agents and checks operate in (default: <work-dir>/<id>/repo; auto-created for init)")
     parser.add_argument("--agent", default="codex", help="adapter name (codex, opencode, command, or a registered adapter)")
     parser.add_argument("--agent-command", help="override adapter command (prompt is provided on stdin)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--goal", help="goal used with a manually supplied phase file")
     init.add_argument("--requirement", action="append", default=[])
     init.add_argument("--constraint", action="append", default=[])
+    init.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND",
+                      help="register verification checks on the initiative so later runs omit --check")
     init.add_argument("--phase-file", help="JSON phase array; skips AI planning")
 
     parser.add_argument("--token-usage-format",
@@ -88,10 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     run.add_argument("--until-ready", action="store_true",
                      help="continue implementation and repair until Human Check is ready")
+    run.add_argument("--no-verify", action="store_true",
+                     help="skip mechanical verification and proceed straight to review")
 
     verify = sub.add_parser("verify", help="run configured checks for the current phase")
     verify.add_argument("id")
-    verify.add_argument("--check", action="append", required=True, metavar="NAME=COMMAND")
+    verify.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND",
+                        help="override checks registered on the initiative")
 
     review = sub.add_parser("review", help="adversarially review a successfully verified phase")
     review.add_argument("id")
@@ -141,10 +146,14 @@ def main(argv: list[str] | None = None) -> int:
         store = WorkStore(Path(args.work_dir), getattr(args, "id", ""))
         if args.command == "init":
             store = WorkStore(Path(args.work_dir), args.id)
+            repository = _repository(store, args.repo)
+            if args.repo is None:
+                repository.mkdir(parents=True, exist_ok=True)
             agent = _agent(args)
             agent.token_usage_format = _resolved_token_usage_format(args, agent)
-            goal, requirements, constraints, phases, planner_output = _plan(args, agent)
-            Pipeline.initialize(store, goal, requirements, constraints, phases)
+            goal, requirements, constraints, phases, planner_output = _plan(args, agent, repository)
+            Pipeline.initialize(store, goal, requirements, constraints, phases,
+                                checks=_checks(args.check))
             usage = extract_token_usage(planner_output, agent.token_usage_format)
             if usage is not None:
                 store.record_usage_event({
@@ -161,13 +170,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         agent = _agent(args)
         agent.token_usage_format = _resolved_token_usage_format(args, agent)
-        pipeline = Pipeline(store, Path(args.repo), agent)
+        pipeline = Pipeline(store, _repository(store, args.repo), agent)
         if args.command == "run":
             checks = _checks(args.check)
+            verify = not args.no_verify
             if args.until_ready:
-                print(pipeline.run_until_ready(checks))
+                print(pipeline.run_until_ready(checks, verify=verify))
             else:
-                print(pipeline.run(checks))
+                print(pipeline.run(checks, verify=verify))
         elif args.command == "verify":
             passed = pipeline.verify(_checks(args.check))
             print("PASS" if passed else "FAIL")

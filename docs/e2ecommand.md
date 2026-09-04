@@ -1,24 +1,30 @@
+# Antigravity CLI (agy) を使ったE2E手順
 
-```
-# 1) 成果物リポジトリ用意
-mkdir -p work/CSV-OPENCODE-03/repo
-git init work/CSV-OPENCODE-03/repo
+`--repo` を省略すると `work/<ID>/repo` へ自動解決される
 
-# 2) Initiative/Phase計画（Agent: opencode）
-python3 -m dev_pipeline.cli --repo work/CSV-OPENCODE-03/repo --agent opencode init \
-  --id CSV-OPENCODE-03 \
+```bash
+# 1) 成果物リポジトリを用意（任意: Git初期化しておくと履歴管理しやすい）
+mkdir -p work/CSV-AGY-01/repo
+git init work/CSV-AGY-01/repo
+
+# 2) Initiative/Phase計画（Agent: antigravity）
+#    work/CSV-AGY-01/repo を対象にPlanningし、Phase-01をrunningにする。
+python3 -m dev_pipeline.cli --agent antigravity init \
+  --id CSV-AGY-01 \
   --request "CSVファイルを指定すると、category列の値ごとの行数を集計し、カテゴリ名の昇順でCSV形式の標準出力に表示するコマンドラインツールを作る" \
   --constraint "Pythonで実装し、追加ライブラリなしで動くこと"
 
 # 3) Agent Run（実装→検証→レビューまで自動継続）
-python3 -m dev_pipeline.cli --repo work/CSV-OPENCODE-03/repo --agent opencode run CSV-OPENCODE-03 \
-  --until-ready \
-  --check 'test=python3 -m unittest discover -s tests -v' \
-  --check 'build=python3 -m compileall -q .'
+#    検証はデフォルトの `python3 -m unittest discover -s tests -v` が自動実行されるため指定不要。
+#    独自検証を使うなら init の --check、または run の --check で差し替え。--no-verify でスキップ可。
+python3 -m dev_pipeline.cli --agent antigravity run CSV-AGY-01 --until-ready
 
 # 4) 状態確認（トークン使用量も表示）
-python3 -m dev_pipeline.cli show CSV-OPENCODE-03
+python3 -m dev_pipeline.cli show CSV-AGY-01
 
-# 5) Human Check
-python3 -m dev_pipeline.cli --repo work/CSV-OPENCODE-03/repo --agent opencode human-check CSV-OPENCODE-03 ACCEPT
+# 5) Human Check（成果物を確認した後にACCEPT。FEEDBACKの場合は--feedbackを付与）
+python3 -m dev_pipeline.cli human-check CSV-AGY-01 ACCEPT
 ```
+
+既存リポジトリや別の場所を対象にする場合のみ、`--repo` でパスを明示します
+（この場合はディレクトリを自動作成しないため、事前に用意してください）。

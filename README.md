@@ -55,18 +55,21 @@ dev-pipeline --help
 
 ### 開発リポジトリの置き場（運用ルール）
 
-新規開発では `work/<ID>/repo/` を基本の置き場とします。別の場所を使いたい場合や
-既存リポジトリを改修する場合は、その場所を `--repo` で指定します。
-これは運用上の取り決めであり、CLIが自動で配置するものではありません。
+新規開発では `work/<ID>/repo/` を基本の置き場とします。`--repo` を省略すると自動的に
+`<work-dir>/<ID>/repo`（既定では `work/<ID>/repo`）へ解決され、`init` は未作成ならディレクトリを
+作成します。別の場所を使いたい場合や既存リポジトリを改修する場合は、その場所を `--repo` で
+明示します（明示した場合はディレクトリを自動作成せず、事前に用意してください）。
 
-`--repo` の省略時はカレントディレクトリが使われ、指定したパスも保存されません。
-Planning・実装・検証・レビューの実行時には、再開時も含めて同じ `--repo` を明示してください。
-相対パスはCLIを起動したディレクトリから解決されるため、以下の例は同じディレクトリで実行します。
+計画・実装・検証・レビューはすべて同じリポジトリを対象とします。既定の `work/<ID>/repo` を
+使う運用では `--repo` の再指定は不要です。外部リポジトリへ `--repo` を明示した場合は、保存されないため
+再開時も同じパスを指定してください。相対パスはCLIを起動したディレクトリから解決されるため、
+以下の例は同じディレクトリで実行します。
 
 ### 1. 自然言語の要求から開始
 
-新規開発では、先に成果物用のディレクトリを作成し、Gitリポジトリとして初期化します。
-既存リポジトリを使う場合は作成不要で、以下の `--repo` をそのパスに置き換えます。
+新規開発では、先に成果物用のリポジトリをGitリポジトリとして初期化しておくことを推奨します
+（`init` がディレクトリは作りますが、Gitの初期化は行いません）。既存リポジトリを使う場合は
+作成不要で、以下の `--repo` をそのパスに置き換えます。
 
 ```bash
 mkdir -p work/INIT-001/repo
@@ -77,7 +80,7 @@ git init work/INIT-001/repo
 Phase 1を即座に `running` にします。`init` 自体は成果物を実装しません。
 
 ```bash
-python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex init \
+python3 -m dev_pipeline.cli --agent codex init \
   --id INIT-001 \
   --request "チームで使える軽量なタスク管理Webアプリを作る" \
   --constraint "SQLiteで動作すること"
@@ -95,23 +98,32 @@ python3 -m dev_pipeline.cli --repo work/INIT-001/repo init --id INIT-001 \
 
 ### 2. Agent Runを実行
 
-AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は指定した
+AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は
 VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。
 
+機械検証はデフォルトで自動実行されます。未指定なら組み込みデフォルト
+`python3 -m unittest discover -s tests -v`（実装エージェントが `tests/` を書く前提）を使います。
+
+* `--check 'NAME=COMMAND'` … そのrunだけ検証コマンドを差し替える（複数指定可）
+* `init --check 'NAME=COMMAND'` … イニシアチブに検証コマンドを登録し、以降のデフォルトにする
+  （Python以外のリポジトリや独自のlint/buildを回したい場合はこちら）
+* `--no-verify` … 機械検証をスキップし、レビューへ直行（opt-out）
+
 ```bash
+# 何も指定しなくても動く（デフォルト検証を使用）
 python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 \
-  --check 'test=python3 -m unittest discover -v' \
+  --until-ready
+
+# 別の検証に差し替えたい場合
+python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 \
+  --until-ready \
+  --check 'test=pytest -q' \
   --check 'build=python3 -m build'
 ```
 
 Human Checkまで自律的に継続する場合は `--until-ready` を指定します。`CONTINUE`、検証失敗、
 レビュー指摘から次Runへ進み、Checkpoint・検証ログ・レビュー指摘を次のAgentへ渡します。
 Human Checkは自動承認しません。Agentプロセス自体の起動・認証エラーは報告して終了します。
-
-```bash
-python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001 --until-ready \
-  --check 'test=python3 -m unittest discover -v'
-```
 
 Codexの既定コマンドは `codex exec --sandbox workspace-write -` です。
 認証済みCodex CLIの設定を使用し、モデルは固定しません。
@@ -230,6 +242,22 @@ work/INIT-001/
 Agentの最終回答は単一のJSON objectである必要があります。既定のOpenCodeアダプターは
 CLIのJSONイベントから最終回答を抽出します。Codexおよび汎用commandアダプターの出力では、
 stdout末尾が単一のJSON objectである必要があります（途中出力は許容）。
+
+## プロンプトのカスタマイズ
+
+Planning・実装run・敵対的レビューの各プロンプトは `dev_pipeline/prompts/`
+（`planner.txt` / `run.txt` / `review.txt`）にテンプレートとして格納しています。
+変数は `$変数名` 形式で、レンダリング時にコード側が埋め込みます（置換漏れは起動時にエラー）。
+文言を調整したい場合は、環境変数 `DEV_PIPELINE_PROMPTS_DIR` で同名ファイルを置いた
+ディレクトリを指定すると同梱テンプレートを差し替えられます。
+
+```bash
+export DEV_PIPELINE_PROMPTS_DIR=/path/to/my-prompts
+```
+
+プロンプトが指定する出力JSONのキーはコードが検証する契約のため、テンプレートの
+`result`/`PASS|FINDINGS`/`findings` 等の構造を変えると実行が失敗します。文言の調整は
+自由ですが、この出力契約は維持してください。
 
 ## トークン使用量の記録
 

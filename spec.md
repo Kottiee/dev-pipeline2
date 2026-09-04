@@ -535,8 +535,18 @@ Initiative全体の目的とPhase構成を保存する。
     "phase-01",
     "phase-02",
     "phase-03"
+  ],
+  "checks": [
+    ["test", "python3 -m unittest discover -v"],
+    ["build", "python3 -m build"]
   ]
 }
+```
+
+`checks` は機械検証コマンド `["名前", "コマンド"]` の配列で、`init` の `--check` で登録できる。
+`run`・`verify` は `--check` 未指定ならこの登録値を使い、それも無ければ組み込みデフォルト
+（`python3 -m unittest discover -s tests -v`）を実行する。`--check` はその場限りの差し替えで、
+`--no-verify` は機械検証自体のスキップを指示する。省略可能。
 
 Phase詳細は phase-XX.json に分離する。
 

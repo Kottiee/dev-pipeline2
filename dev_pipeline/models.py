@@ -16,6 +16,15 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _parse_checks(value: Any) -> list[tuple[str, str]]:
+    checks = []
+    for entry in value or []:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2 \
+                and all(isinstance(item, str) for item in entry):
+            checks.append((entry[0], entry[1]))
+    return checks
+
+
 @dataclass
 class Phase:
     id: str
@@ -45,10 +54,13 @@ class Initiative:
     requirements: list[str]
     constraints: list[str]
     phase_order: list[str]
+    checks: list[tuple[str, str]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Initiative":
-        initiative = cls(**value)
+        data = dict(value)
+        data["checks"] = _parse_checks(data.get("checks"))
+        initiative = cls(**data)
         if not initiative.goal or not initiative.phase_order:
             raise ValueError("initiative goal and at least one phase are required")
         return initiative

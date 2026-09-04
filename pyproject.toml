@@ -16,3 +16,6 @@ dev-pipeline = "dev_pipeline.cli:main"
 [tool.setuptools.packages.find]
 include = ["dev_pipeline*"]
 
+[tool.setuptools.package-data]
+dev_pipeline = ["prompts/*.txt"]
+

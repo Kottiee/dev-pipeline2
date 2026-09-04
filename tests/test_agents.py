@@ -80,6 +80,48 @@ class AdapterSelectionTests(unittest.TestCase):
         self.assertEqual(3, len(calls))
         self.assertTrue(all(repository == repo for _, repository in calls))
 
+    def test_init_without_repo_derives_and_creates_default_repository(self):
+        calls = []
+
+        class RecordingAgent:
+            def execute(self, prompt, repository):
+                calls.append(repository)
+                data = {"goal": "ship", "requirements": ["works"], "constraints": [],
+                        "phases": [{"goal": "usable outcome", "scope": ["feature"],
+                                    "acceptance_criteria": ["works"]}]}
+                return AgentResult(data, json.dumps(data), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            factory = lambda command, log_dir: RecordingAgent()
+            with patch.dict(AGENT_FACTORIES, {"recording": factory}), patch("builtins.print"):
+                result = main(["--work-dir", str(root / "work"), "--agent", "recording",
+                               "init", "--id", "TEST", "--request", "ship"])
+            derived = WorkStore(root / "work", "TEST").path / "repo"
+            self.assertEqual([derived], calls)
+            self.assertTrue(derived.is_dir())
+        self.assertEqual(0, result)
+
+    def test_explicit_repo_is_not_replaced_by_derivation(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            external = root / "elsewhere"
+            external.mkdir()
+
+            class RecordingAgent:
+                def execute(self, prompt, repository):
+                    calls.append(repository)
+                    return AgentResult({"goal": "g", "requirements": [], "constraints": [],
+                                        "phases": [{"goal": "o", "scope": ["s"],
+                                                    "acceptance_criteria": ["w"]}]}, "{}", "")
+
+            factory = lambda command, log_dir: RecordingAgent()
+            with patch.dict(AGENT_FACTORIES, {"recording": factory}), patch("builtins.print"):
+                main(["--work-dir", str(root / "work"), "--repo", str(external),
+                      "--agent", "recording", "init", "--id", "TEST", "--request", "ship"])
+        self.assertEqual([external.resolve()], calls)
+
     def test_generic_adapter_runs_real_process_with_stdin_cwd_and_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory).resolve()
