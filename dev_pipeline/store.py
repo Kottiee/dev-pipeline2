@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Initiative, Phase, PipelineState, now_iso
+from .usage import summarize_token_usage
 
 
 class WorkStore:
@@ -19,7 +20,10 @@ class WorkStore:
         self.path = self.root / initiative_id
 
     def create(self, initiative: Initiative, phases: list[Phase]) -> None:
-        if self.path.exists():
+        # A repository may already have been prepared beneath this directory.
+        # Refuse to overwrite pipeline metadata, including a partial initialization.
+        managed_paths = ("initiative.json", "state.json", "usage.json", "phases", "runs", "feedback", "evidence")
+        if any((self.path / name).exists() for name in managed_paths):
             raise FileExistsError(f"initiative already exists: {self.initiative_id}")
         for directory in ("phases", "runs", "feedback", "evidence"):
             (self.path / directory).mkdir(parents=True, exist_ok=True)
@@ -75,3 +79,25 @@ class WorkStore:
         destination = self._safe_path(relative)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(text, encoding="utf-8")
+
+    def _usage_events(self) -> list[dict[str, Any]]:
+        path = self.path / "usage.json"
+        if not path.is_file():
+            return []
+        try:
+            value = self.read_json("usage.json")
+        except (OSError, ValueError):
+            return []
+        events = value.get("events") if isinstance(value, dict) else None
+        if not isinstance(events, list):
+            return []
+        return [event for event in events if isinstance(event, dict)]
+
+    def record_usage_event(self, event: dict[str, Any]) -> None:
+        events = self._usage_events()
+        events.append(event)
+        summary = summarize_token_usage(item.get("usage") for item in events)
+        self.write_json("usage.json", {"events": events, "token_usage": summary})
+
+    def load_token_usage(self) -> dict[str, int]:
+        return summarize_token_usage(item.get("usage") for item in self._usage_events())
