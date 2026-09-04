@@ -273,7 +273,7 @@ class UsagePipelineTests(unittest.TestCase):
             store = WorkStore(self.root / "work", "PLAN-001")
             with patch("builtins.print"):
                 result = main(["--work-dir", str(self.root / "work"), "--repo", str(self.root),
-                               "--agent", "codex", "init", "--id", "PLAN-001",
+                               "--agent", "codex", "init", "--plan-only", "--id", "PLAN-001",
                                "--request", "ship something"])
         self.assertEqual(0, result)
         execute.assert_called_once()

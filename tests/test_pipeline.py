@@ -58,7 +58,7 @@ class PipelineTests(unittest.TestCase):
                    return_value=AgentResult(plan, json.dumps(plan), "")) as execute:
             with patch("builtins.print"):
                 result = main(["--work-dir", str(store.root), "--repo", str(repo),
-                               "--agent", "codex", "init", "--id", store.initiative_id,
+                               "--agent", "codex", "init", "--plan-only", "--id", store.initiative_id,
                                "--request", "ship a usable feature"])
         self.assertEqual(0, result)
         self.assertEqual(repo, execute.call_args.args[1])

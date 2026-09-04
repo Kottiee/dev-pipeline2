@@ -72,7 +72,8 @@ class AdapterSelectionTests(unittest.TestCase):
             args = ["--agent", "alternate", "--repo", str(repo), "--work-dir", str(repo / "work")]
             factory = lambda command, log_dir: AlternateAgent()
             with patch.dict(AGENT_FACTORIES, {"alternate": factory}), patch("builtins.print"):
-                self.assertEqual(0, main(args + ["init", "--id", "TEST", "--request", "ship"]))
+                self.assertEqual(0, main(args + ["init", "--plan-only", "--id", "TEST",
+                                                 "--request", "ship"]))
                 check = "test=" + shlex.join([sys.executable, "-c", "print('ok')"])
                 self.assertEqual(0, main(args + ["run", "TEST", "--until-ready", "--check", check]))
                 self.assertEqual(0, main(args + ["human-check", "TEST", "ACCEPT"]))
@@ -96,7 +97,7 @@ class AdapterSelectionTests(unittest.TestCase):
             factory = lambda command, log_dir: RecordingAgent()
             with patch.dict(AGENT_FACTORIES, {"recording": factory}), patch("builtins.print"):
                 result = main(["--work-dir", str(root / "work"), "--agent", "recording",
-                               "init", "--id", "TEST", "--request", "ship"])
+                               "init", "--plan-only", "--id", "TEST", "--request", "ship"])
             derived = WorkStore(root / "work", "TEST").path / "repo"
             self.assertEqual([derived], calls)
             self.assertTrue(derived.is_dir())
@@ -119,8 +120,42 @@ class AdapterSelectionTests(unittest.TestCase):
             factory = lambda command, log_dir: RecordingAgent()
             with patch.dict(AGENT_FACTORIES, {"recording": factory}), patch("builtins.print"):
                 main(["--work-dir", str(root / "work"), "--repo", str(external),
-                      "--agent", "recording", "init", "--id", "TEST", "--request", "ship"])
+                      "--agent", "recording", "init", "--plan-only", "--id", "TEST",
+                      "--request", "ship"])
         self.assertEqual([external.resolve()], calls)
+
+    def test_init_automatically_continues_until_human_check(self):
+        replies = iter([
+            {"goal": "ship", "requirements": ["works"], "constraints": [],
+             "phases": [{"goal": "usable outcome", "scope": ["feature"],
+                         "acceptance_criteria": ["works"]}]},
+            {"result": "GOAL_REACHED", "completed": ["feature"], "remaining": [],
+             "problems": [], "recommended_next_action": "verify"},
+            {"result": "PASS", "findings": []},
+        ])
+        calls = []
+
+        class AutoAgent:
+            def execute(self, prompt, repository):
+                calls.append(repository)
+                data = next(replies)
+                return AgentResult(data, json.dumps(data), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            work = root / "work"
+            check = "test=" + shlex.join([sys.executable, "-c", "print('ok')"])
+            with patch.dict(AGENT_FACTORIES, {"auto": lambda c, l: AutoAgent()}), \
+                 patch("builtins.print"):
+                result = main(["--work-dir", str(work), "--agent", "auto",
+                               "init", "--id", "TEST", "--request", "ship",
+                               "--check", check])
+            store = WorkStore(work, "TEST")
+            self.assertEqual(0, result)
+            self.assertEqual("AWAITING_HUMAN_CHECK", store.load_state().state)
+            self.assertTrue(store.path.joinpath("repo").is_dir())
+            self.assertEqual(3, len(calls))
+            self.assertTrue(all(repo == store.path / "repo" for repo in calls))
 
     def test_generic_adapter_runs_real_process_with_stdin_cwd_and_logs(self):
         with tempfile.TemporaryDirectory() as directory:

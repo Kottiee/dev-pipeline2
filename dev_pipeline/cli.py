@@ -80,6 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND",
                       help="register verification checks on the initiative so later runs omit --check")
     init.add_argument("--phase-file", help="JSON phase array; skips AI planning")
+    init.add_argument("--plan-only", action="store_true",
+                      help="stop after planning instead of automatically starting the first run")
 
     parser.add_argument("--token-usage-format",
                         help="agent output format for token usage extraction "
@@ -160,7 +162,10 @@ def main(argv: list[str] | None = None) -> int:
                     "stage": "planner", "phase": None, "run": None,
                     "usage": usage, "recorded_at": now_iso(),
                 })
-            print(json.dumps(store.load_state().as_dict(), ensure_ascii=False, indent=2))
+            if args.plan_only:
+                print(json.dumps(store.load_state().as_dict(), ensure_ascii=False, indent=2))
+                return 0
+            print(Pipeline(store, repository, agent).run_until_ready(_checks(args.check)))
             return 0
         if args.command == "status":
             print(json.dumps(store.load_state().as_dict(), ensure_ascii=False, indent=2))

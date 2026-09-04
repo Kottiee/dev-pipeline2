@@ -26,7 +26,8 @@ flowchart TD
     next -->|なし| complete["COMPLETED"]
 ```
 
-`init` はPhase開始まで、`run --until-ready` はHuman Check待ちまでを進めます。
+`init` はPlanning後そのまま最初のRunからHuman Check待ちまで自動で進めます（`--plan-only` で
+計画後停止）。途中停止からの再開や次Phaseの実行には `run --until-ready` を使います。
 Human Checkは自動承認せず、`human-check` でACCEPTまたはFEEDBACKを入力します。
 
 * `initiative.json`、`state.json`、Phase定義を `work/<ID>/` に保存
@@ -76,14 +77,17 @@ mkdir -p work/INIT-001/repo
 git init work/INIT-001/repo
 ```
 
-同じリポジトリを対象にPlanningします。Planningは人間の承認待ちで停止せず、
-Phase 1を即座に `running` にします。`init` 自体は成果物を実装しません。
+同じリポジトリを対象にPlanningします。`init` は計画後そのまま最初のRunへ自動継続し、
+実装→検証→レビューまで進んで **Human Check待ち(AWAITING_HUMAN_CHECK)** で止まります。
+フェーズプランの人間レビューもこの最初のHuman Checkに一本化されます。
+プランを先に確認したい場合のみ `--plan-only` を付けると、従来どおり計画直後で停止します。
 
 ```bash
 python3 -m dev_pipeline.cli --agent codex init \
   --id INIT-001 \
   --request "チームで使える軽量なタスク管理Webアプリを作る" \
   --constraint "SQLiteで動作すること"
+# → Planning後、自動で最初のRunが始まり、Human Check待ちまで進む
 ```
 
 Phaseを明示して再現性のある開始をする場合は、サンプル形式のJSONを渡します。この場合のみ
@@ -96,10 +100,14 @@ python3 -m dev_pipeline.cli --repo work/INIT-001/repo init --id INIT-001 \
   --phase-file examples/phases.json
 ```
 
-### 2. Agent Runを実行
+### 2. Agent Runを実行（後続Phase・再開・差し替え時）
 
-AgentはRepositoryを直接変更し、最終出力に共通JSON契約を返します。`GOAL_REACHED` の場合は
-VerificationとAdversarial Reviewまで自動で進み、`CONTINUE` ならCheckpointを残して終了します。
+`init` の自動継続は最初のHuman Checkまでです。ACCEPTで次Phaseが始まる場合や、途中停止からの
+再開・検証コマンドの差し替えには `run` を使います。AgentはRepositoryを直接変更し、最終出力に
+共通JSON契約を返します。`GOAL_REACHED` の場合はVerificationとAdversarial Reviewまで自動で進み、
+`CONTINUE` ならCheckpointを残して終了します。Human Checkまで自律的に継続するには `--until-ready` を
+指定します。`CONTINUE`、検証失敗、レビュー指摘から次Runへ進み、Checkpoint・検証ログ・レビュー指摘を
+次のAgentへ渡します。Human Checkは自動承認しません。
 
 機械検証はデフォルトで自動実行されます。実装エージェント(run)は自動テストに加えて、リポジトリ直下に
 `devpipeline-tests.json` を書き、そこへ「テスト一式を実行するコマンド」を `{"command": "..."}` として
@@ -123,10 +131,6 @@ python3 -m dev_pipeline.cli --repo work/INIT-001/repo --agent codex run INIT-001
   --check 'test=pytest -q' \
   --check 'build=python3 -m build'
 ```
-
-Human Checkまで自律的に継続する場合は `--until-ready` を指定します。`CONTINUE`、検証失敗、
-レビュー指摘から次Runへ進み、Checkpoint・検証ログ・レビュー指摘を次のAgentへ渡します。
-Human Checkは自動承認しません。Agentプロセス自体の起動・認証エラーは報告して終了します。
 
 Codexの既定コマンドは `codex exec --sandbox workspace-write -` です。
 認証済みCodex CLIの設定を使用し、モデルは固定しません。
