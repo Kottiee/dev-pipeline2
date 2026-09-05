@@ -55,7 +55,8 @@ class PipelineTests(unittest.TestCase):
         source.write_text("keep this", encoding="utf-8")
         plan = {"goal": "ship", "requirements": ["works"], "constraints": [], "phases": PHASES}
         with patch("dev_pipeline.agents.codex.CodexAgent.execute",
-                   return_value=AgentResult(plan, json.dumps(plan), "")) as execute:
+                   return_value=AgentResult(plan, json.dumps(plan), "")) as execute, \
+             patch("dev_pipeline.cli.collect_agent_allocation", return_value=None):
             with patch("builtins.print"):
                 result = main(["--work-dir", str(store.root), "--repo", str(repo),
                                "--agent", "codex", "init", "--plan-only", "--id", store.initiative_id,
