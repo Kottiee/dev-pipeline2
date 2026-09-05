@@ -347,14 +347,16 @@ class WebService:
                 phases = [work.load_phase(p).as_dict() for p in initiative.phase_order]
                 result = {"initiative": initiative.as_dict(), "state": state.as_dict(),
                           "revision": state.revision(), "phases": phases,
-                          "usage": work.load_token_usage()}
+                          "usage": work.load_token_usage(),
+                          "allocation_usage": work.load_allocation_usage()}
             except FileNotFoundError:
                 config = self.configs.get(initiative_id)
                 if not config:
                     raise FileNotFoundError("案件が見つかりません")
                 result = {"initiative": {"id": initiative_id, "goal": config.get("request", "初期化中")},
                           "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
-                          "revision": None, "phases": [], "usage": {}}
+                          "revision": None, "phases": [], "usage": {},
+                          "allocation_usage": {}}
             job = self._latest(initiative_id)
             if not include_evidence:
                 return {**result, "job": job}

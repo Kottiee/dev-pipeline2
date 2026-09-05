@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .allocation import summarize_allocation_usage
 from .models import Initiative, Phase, PipelineState, now_iso
 from .usage import summarize_token_usage
 
@@ -113,7 +114,15 @@ class WorkStore:
         events = self._usage_events()
         events.append(event)
         summary = summarize_token_usage(item.get("usage") for item in events)
-        self.write_json("usage.json", {"events": events, "token_usage": summary})
+        allocation = summarize_allocation_usage(events)
+        self.write_json("usage.json", {
+            "events": events,
+            "token_usage": summary,
+            "allocation_usage": allocation,
+        })
 
     def load_token_usage(self) -> dict[str, int]:
         return summarize_token_usage(item.get("usage") for item in self._usage_events())
+
+    def load_allocation_usage(self) -> dict[str, Any]:
+        return summarize_allocation_usage(self._usage_events())

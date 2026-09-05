@@ -16,6 +16,8 @@ class AntigravityAgent:
         self.command = command or "agy"
         self.runner = ProcessRunner("antigravity", log_dir)
         self.token_usage_format = "antigravity"
+        self.allocation_usage_format = "antigravity"
+        self.allocation_command = self.command
         self.default_timeout = default_timeout
 
     def execute(self, prompt: str, repository: Path) -> AgentResult:

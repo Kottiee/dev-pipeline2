@@ -287,7 +287,7 @@ export DEV_PIPELINE_PROMPTS_DIR=/path/to/my-prompts
 `result`/`PASS|FINDINGS`/`findings` 等の構造を変えると実行が失敗します。文言の調整は
 自由ですが、この出力契約は維持してください。
 
-## トークン使用量の記録
+## トークン使用量と割り当て使用率の記録
 
 Agentの実行ログ（stdoutのJSONL）からトークン使用量を抽出し、`usage.json` に実行単位の
 eventsとして追記したうえで、案件全体の累計を毎回の保存時にeventsから再集計します。
@@ -304,6 +304,11 @@ eventsとして追記したうえで、案件全体の累計を毎回の保存�
   不正扱い。有効なイベントがなければその実行は未取得（記録しない）
 * 表示: `show INIT-001` が総数と内訳を桁区切りで表示。`reported_invocations`が0なら
   `Token usage: unavailable`
+* 割り当て使用率: 各Agent実行後、Codexはapp-serverの `account/rateLimits/read`、
+  Antigravityは `agy -p /usage --output-format json` から各時間枠の使用済み割合を取得する。
+  取得できた最新値をeventsからAgent別に再構成し、`show` とWeb UIでトークン数と併記する
+* 使用率の取得は補助情報のため、CLI未対応・未認証・タイムアウトなどで取得できなくても
+  Pipeline本体の実行結果には影響しない
 
 ```bash
 python3 -m dev_pipeline.cli --agent opencode --token-usage-format opencode run INIT-001 ...
@@ -311,7 +316,7 @@ python3 -m dev_pipeline.cli show INIT-001
 ```
 
 抽出形式は明示の `--token-usage-format` が最優先で、未指定なら各アダプターの形式
-（codex / opencode）へ、未知の明示値は起動前に拒否されます。新しい出力形式は
+（codex / opencode / antigravity）へ、未知の明示値は起動前に拒否されます。新しい出力形式は
 `usage.TOKEN_USAGE_EXTRACTORS` への抽出関数登録で追加できます。
 
 互換上の注意: `reported_invocations` はCodexでは有効な完了イベント数、OpenCodeでは
