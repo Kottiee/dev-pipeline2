@@ -11,6 +11,7 @@ from .agents.base import Agent
 from .models import now_iso
 from .pipeline import Pipeline, TransitionError
 from .prompts import render_prompt
+from .reporting import read_pipeline
 from .store import WorkStore
 from .usage import (
     DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage, format_token_usage,
@@ -118,27 +119,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _show(store: WorkStore) -> str:
-    state = store.load_state()
-    initiative = store.load_initiative()
+    report = read_pipeline(store.root, store.initiative_id, include_evidence=False)
+    state = report["state"]
+    initiative = report["initiative"]
     lines = [
-        f"Initiative: {initiative.id}",
-        f"Status: {state.state}",
-        f"Goal: {initiative.goal}",
+        f"Initiative: {initiative['id']}",
+        f"Status: {state['state']}",
+        f"Goal: {initiative['goal']}",
     ]
-    phases = []
-    for phase_id in initiative.phase_order:
-        try:
-            phases.append(store.load_phase(phase_id))
-        except ValueError:
-            continue
-    if state.current_phase:
-        current = next((phase for phase in phases if phase.id == state.current_phase), None)
-        suffix = f" ({current.status})" if current else ""
-        lines.append(f"Current phase: {state.current_phase}{suffix}")
+    phases = report["phases"]
+    if state["current_phase"]:
+        current = next((phase for phase in phases if phase["id"] == state["current_phase"]), None)
+        suffix = f" ({current['status']})" if current else ""
+        lines.append(f"Current phase: {state['current_phase']}{suffix}")
     if phases:
         lines.append("Phases:")
-        lines.extend(f"  {phase.id}: {phase.status}" for phase in phases)
-    lines.append(format_token_usage(store.load_token_usage()))
+        lines.extend(f"  {phase['id']}: {phase['status']}" for phase in phases)
+    lines.append(format_token_usage(report["usage"]))
     return "\n".join(lines)
 
 
