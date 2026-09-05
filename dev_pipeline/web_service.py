@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import mimetypes
 import os
 import signal
 import subprocess
@@ -18,6 +19,11 @@ from .store import WorkStore
 
 AGENTS = ("codex", "opencode", "antigravity")
 ACTIVE = {"queued", "running", "stopping"}
+REPOSITORY_SKIP_DIRS = {".git", ".hg", ".svn", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
+REPOSITORY_SECRET_NAMES = {".env", "credentials.json", "secrets.json"}
+REPOSITORY_SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+REPOSITORY_FILE_LIMIT = 512 * 1024
+REPOSITORY_ASSET_LIMIT = 10 * 1024 * 1024
 
 
 class Conflict(ValueError):
@@ -95,6 +101,82 @@ class WebService:
             "agent": self.default_agent,
             "repository": str(self._work(initiative_id).path / "repo"),
         })
+
+    def _repository_root(self, initiative_id):
+        # detail() also verifies that the initiative belongs to this service.
+        self.detail(initiative_id, include_evidence=False)
+        root = Path(self._config(initiative_id)["repository"]).resolve()
+        if not root.is_dir():
+            raise FileNotFoundError("リポジトリが見つかりません")
+        return root
+
+    @staticmethod
+    def _repository_visible(relative):
+        parts = Path(relative).parts
+        if any(part in REPOSITORY_SKIP_DIRS for part in parts):
+            return False
+        name = parts[-1].lower() if parts else ""
+        if name in REPOSITORY_SECRET_NAMES or name.startswith(".env."):
+            return False
+        return Path(name).suffix not in REPOSITORY_SECRET_SUFFIXES
+
+    def _repository_path(self, initiative_id, relative):
+        if not isinstance(relative, str) or not relative or len(relative) > 4096:
+            raise ValueError("ファイルのパスが不正です")
+        root = self._repository_root(initiative_id)
+        path = (root / relative).resolve()
+        if root not in path.parents or not self._repository_visible(path.relative_to(root)):
+            raise ValueError("このファイルは表示できません")
+        if not path.is_file():
+            raise FileNotFoundError("ファイルが見つかりません")
+        return root, path
+
+    def repository(self, initiative_id):
+        root = self._repository_root(initiative_id)
+        files = []
+        truncated = False
+        for directory, names, filenames in os.walk(root):
+            names[:] = sorted(name for name in names if name not in REPOSITORY_SKIP_DIRS)
+            for name in sorted(filenames):
+                path = Path(directory) / name
+                relative = path.relative_to(root)
+                if not self._repository_visible(relative) or path.is_symlink():
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                files.append({"path": relative.as_posix(), "size": size,
+                              "html": path.suffix.lower() in (".html", ".htm")})
+                if len(files) >= 4000:
+                    truncated = True
+                    break
+            if truncated:
+                break
+        return {"repository": str(root), "files": files, "truncated": truncated}
+
+    def repository_file(self, initiative_id, relative):
+        _, path = self._repository_path(initiative_id, relative)
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            raw = stream.read(REPOSITORY_FILE_LIMIT + 1)
+        if b"\0" in raw:
+            raise ValueError("バイナリファイルはソース表示できません")
+        try:
+            content = raw[:REPOSITORY_FILE_LIMIT].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("UTF-8のテキストファイルだけ表示できます") from error
+        return {"path": relative, "content": content, "size": size,
+                "truncated": len(raw) > REPOSITORY_FILE_LIMIT,
+                "language": path.suffix.lower().removeprefix(".") or "text",
+                "html": path.suffix.lower() in (".html", ".htm")}
+
+    def repository_asset(self, initiative_id, relative):
+        _, path = self._repository_path(initiative_id, relative)
+        if path.stat().st_size > REPOSITORY_ASSET_LIMIT:
+            raise ValueError("プレビュー用ファイルが大きすぎます")
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return path.read_bytes(), mime
 
     def _latest(self, initiative_id):
         jobs = [j for j in self.jobs.values() if j["initiative_id"] == initiative_id]

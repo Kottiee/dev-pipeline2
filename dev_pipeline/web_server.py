@@ -10,7 +10,7 @@ import signal
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .web_service import AGENTS, Conflict, WebService, text_field
 
@@ -44,6 +44,17 @@ def handler_for(service, origins, allowed_users=()):
             self.end_headers()
             self.wfile.write(payload)
 
+        def _send_preview(self, payload, content_type):
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+            self.end_headers()
+            self.wfile.write(payload)
+
         def _authorize(self, mutation=False):
             if self.headers.get("Host") not in hosts:
                 self._send(403, {"error": "接続先が未登録です。サービスの --public-url を確認してください。"})
@@ -60,7 +71,8 @@ def handler_for(service, origins, allowed_users=()):
         def do_GET(self):
             if not self._authorize():
                 return
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
             try:
                 if path in STATIC:
                     name = STATIC[path]
@@ -75,8 +87,22 @@ def handler_for(service, origins, allowed_users=()):
                 elif path == "/api/initiatives":
                     self._send(200, {"initiatives": service.list_initiatives()})
                 elif path.startswith("/api/initiatives/"):
-                    initiative_id = unquote(path.removeprefix("/api/initiatives/"))
-                    self._send(200, service.detail(initiative_id))
+                    parts = path.removeprefix("/api/initiatives/").split("/")
+                    initiative_id = unquote(parts[0])
+                    if len(parts) == 1:
+                        self._send(200, service.detail(initiative_id))
+                    elif len(parts) == 2 and parts[1] == "repository":
+                        relative = parse_qs(parsed.query).get("path", [""])[0]
+                        self._send(200, service.repository_file(initiative_id, relative)
+                                   if relative else service.repository(initiative_id))
+                    else:
+                        self._send(404, {"error": "見つかりません"})
+                elif path.startswith("/preview/"):
+                    parts = path.removeprefix("/preview/").split("/", 1)
+                    if len(parts) != 2:
+                        raise FileNotFoundError("プレビューが見つかりません")
+                    data, mime = service.repository_asset(unquote(parts[0]), unquote(parts[1]))
+                    self._send_preview(data, mime + ("; charset=utf-8" if mime.startswith("text/") else ""))
                 else:
                     self._send(404, {"error": "見つかりません"})
             except FileNotFoundError as error:

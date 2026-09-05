@@ -133,6 +133,30 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual('AWAITING_HUMAN_CHECK', self.service.detail('KEEP')['state']['state'])
         self.assertEqual(job['id'], self.service.detail('KEEP')['job']['id'])
 
+    def test_repository_listing_source_and_isolated_preview(self):
+        job = self.service.create({'id':'FILES','request_id':'files','request':'repository files'})
+        detail = self.wait_job(job)
+        repository = Path(detail['config']['repository'])
+        (repository / 'site').mkdir()
+        (repository / 'site' / 'index.html').write_text('<link rel="stylesheet" href="style.css"><h1>Hello</h1>')
+        (repository / 'site' / 'style.css').write_text('h1 { color: green; }')
+        (repository / '.env').write_text('SECRET=value')
+        (repository / 'private.pem').write_text('secret')
+        listing = self.service.repository('FILES')
+        paths = [item['path'] for item in listing['files']]
+        self.assertIn('feature.py', paths)
+        self.assertIn('site/index.html', paths)
+        self.assertNotIn('.env', paths)
+        self.assertNotIn('private.pem', paths)
+        source = self.service.repository_file('FILES', 'site/index.html')
+        self.assertIn('<h1>Hello</h1>', source['content'])
+        self.assertTrue(source['html'])
+        data, mime = self.service.repository_asset('FILES', 'site/style.css')
+        self.assertEqual(b'h1 { color: green; }', data)
+        self.assertEqual('text/css', mime)
+        with self.assertRaises(ValueError):
+            self.service.repository_file('FILES', '../initiative.json')
+
     def test_cli_lock_rejects_other_mutation_and_releases_after_exit(self):
         store = WorkStore(self.root / 'work', 'LOCK')
         with store.execution_lock(), patch('builtins.print'):
@@ -177,6 +201,18 @@ class WebServiceTests(unittest.TestCase):
             code, body, _ = request('/api/initiatives',{'id':'HTTP','request':'create','request_id':'http'},headers)
             self.assertEqual(202,code,body)
             self.assertEqual('AWAITING_HUMAN_CHECK',self.wait_job(json.loads(body))['state']['state'])
+            code, body, _ = request('/api/initiatives/HTTP/repository')
+            self.assertEqual(200, code)
+            self.assertIn('feature.py', body.decode())
+            code, body, _ = request('/api/initiatives/HTTP/repository?path=feature.py')
+            self.assertEqual(200, code)
+            self.assertIn('def total', body.decode())
+            repository = Path(self.service.detail('HTTP')['config']['repository'])
+            (repository / 'index.html').write_text('<h1>Preview</h1>')
+            code, body, preview_headers = request('/preview/HTTP/index.html')
+            self.assertEqual(200, code)
+            self.assertEqual(b'<h1>Preview</h1>', body)
+            self.assertIn('sandbox allow-scripts', preview_headers['Content-Security-Policy'])
         finally:
             server.shutdown();server.server_close();thread.join()
 

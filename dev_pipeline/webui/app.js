@@ -5,6 +5,7 @@ const ACTIVE = ['queued','running','stopping'];
 const states = {PLANNING:'計画中', PHASE_RUNNING:'実装', PHASE_VERIFYING:'検証', PHASE_REVIEWING:'レビュー', AWAITING_HUMAN_CHECK:'承認待ち', PHASE_FIXING:'修正', COMPLETED:'完了', FAILED:'エラー'};
 const phases = {pending:'未着手',running:'進行中',awaiting_human_check:'承認待ち',accepted:'承認済み'};
 let config, items = [], detail, filter = 'all', tab = 'overview', evidencePhase, refreshBusy = false, refreshAgain = false, submitting = false, lastRender = '', decisionSnapshot;
+let repository = {initiativeId:null, files:null, file:null, selectedPath:null, loading:false, error:null};
 let selected = decodeURIComponent(location.hash.slice(1));
 let toastTimer, lastList = '';
 const pendingRequests = new Map();
@@ -79,6 +80,41 @@ function overviewView() {
   <details><summary>依頼の要件・制約</summary><div class="section"><h3>要件</h3><p class="prose">${esc((detail.initiative.requirements || []).join('\n') || detail.config.requirements || '指定なし')}</p></div><div class="section"><h3>制約</h3><p class="prose">${esc((detail.initiative.constraints || []).join('\n') || detail.config.constraints || '指定なし')}</p></div></details>
   <details><summary>実行設定</summary><form id="settings-form" class="settings-form"><label>エージェント<select name="agent" ${jobActive(detail)?'disabled':''}>${config.agents.map(a=>`<option ${a===detail.config.agent?'selected':''}>${esc(a)}</option>`).join('')}</select></label><label>リポジトリのパス<input name="repository" value="${esc(detail.config.repository)}" required ${jobActive(detail)?'disabled':''}></label><p class="hint">CLIで作った案件が外部リポジトリを使っていた場合は、最初に同じパスを指定してください。</p><p class="form-error" role="alert"></p><button class="button" ${jobActive(detail)?'disabled':''}>設定を保存</button></form></details>`;
 }
+const fileSize = value => value < 1024 ? `${value} B` : value < 1024*1024 ? `${(value/1024).toFixed(value<10240?1:0)} KB` : `${(value/1024/1024).toFixed(1)} MB`;
+const previewPath = path => `/preview/${encodeURIComponent(selected)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+function fileTree(files) {
+  const root = {};
+  files.forEach(file => {
+    const parts=file.path.split('/'); let node=root;
+    parts.forEach((part,index)=>{if(index===parts.length-1)node[part]={__file:file};else node=node[part]||(node[part]={});});
+  });
+  const branch = node => Object.entries(node).sort(([a,av],[b,bv])=>Number(!!av.__file)-Number(!!bv.__file)||a.localeCompare(b)).map(([name,value]) => value.__file
+    ? `<button class="repo-file ${value.__file.path===repository.selectedPath?'selected':''}" data-file="${esc(value.__file.path)}"><span>${esc(name)}</span><small>${fileSize(value.__file.size)}</small></button>`
+    : `<details class="repo-folder" open><summary>${esc(name)}</summary><div>${branch(value)}</div></details>`).join('');
+  return branch(root);
+}
+function repositoryView() {
+  if(repository.loading && !repository.files)return '<div class="repo-loading">リポジトリを読み込んでいます…</div>';
+  if(repository.error && !repository.files)return `<p class="notice error">${esc(repository.error)}</p><button id="repo-retry" class="button">再読み込み</button>`;
+  if(!repository.files)return '<div class="repo-loading">リポジトリを読み込んでいます…</div>';
+  const list=repository.files;
+  const viewer=repository.file ? `<div class="code-heading"><div><strong>${esc(repository.file.path)}</strong><span>${fileSize(repository.file.size)} · ${esc(repository.file.language)}</span></div>${repository.file.html?`<a class="button preview-button" href="${previewPath(repository.file.path)}" target="_blank" rel="noopener">別タブで開く ↗</a>`:''}</div>${repository.file.truncated?'<p class="notice">ファイルが大きいため、先頭512KBを表示しています。</p>':''}<pre class="source-code"><code>${esc(repository.file.content)}</code></pre>`
+    : repository.error ? `<p class="notice error">${esc(repository.error)}</p>` : '<div class="repo-empty">左の一覧からファイルを選択してください。</div>';
+  return `<div class="repo-summary"><div><h3>リポジトリの中身</h3><p title="${esc(repository.repository)}">${esc(repository.repository)}</p></div><span>${list.length.toLocaleString()} files${repository.truncated?'（上限まで表示）':''}</span></div>${list.length?`<div class="repo-browser"><aside class="repo-tree" aria-label="ファイル一覧">${fileTree(list)}</aside><section class="code-viewer" aria-live="polite">${viewer}</section></div>`:'<div class="repo-empty">表示できるファイルがありません。</div>'}`;
+}
+async function loadRepository(path) {
+  if(repository.loading)return;
+  repository.loading=true;repository.error=null;renderDetail(true);
+  try {
+    if(!repository.files || repository.initiativeId!==selected){
+      const result=await api(pathFor(selected)+'/repository');
+      repository={initiativeId:selected,files:result.files,file:null,selectedPath:null,loading:true,error:null,repository:result.repository,truncated:result.truncated};
+      path=path || result.files.find(file=>/^readme(?:\.|$)/i.test(file.path))?.path || result.files[0]?.path;
+    }
+    if(path){repository.selectedPath=path;repository.file=await api(pathFor(selected)+'/repository?path='+encodeURIComponent(path));}
+  } catch(error){repository.error=error.message;repository.file=null;}
+  finally{repository.loading=false;renderDetail(true);}
+}
 function actionBar() {
   const disabled = submitting ? 'disabled' : '';
   if (jobActive(detail)) return `<div class="action-bar"><p class="action-note">画面を閉じても実行は続きます</p><div><button class="button danger" id="stop-open" ${detail.job.status==='stopping'?'disabled':''}>${detail.job.status==='stopping'?'停止しています…':'実行を停止'}</button></div></div>`;
@@ -91,7 +127,7 @@ function renderDetail(force = false) {
   if (!detail || !selected) {
     $('#detail-pane').innerHTML = '<div class="empty-detail"><span class="empty-mark">↗</span><h2>案件を選んで確認</h2><p>進行状況、テスト結果、レビュー結果を<br>ここで確認できます。</p></div>'; lastRender=''; return;
   }
-  const signature = JSON.stringify([detail,tab,evidencePhase,submitting]);
+  const signature = JSON.stringify([detail,tab,evidencePhase,submitting,repository]);
   if (!force && signature === lastRender) return;
   // A polling update must not discard an in-progress settings edit.
   if (!force && $('#settings-form')?.contains(document.activeElement)) return;
@@ -101,10 +137,12 @@ function renderDetail(force = false) {
   $('#detail-pane').innerHTML = `<button class="back" id="back">← 案件一覧</button><header class="detail-header"><p class="id">${esc(detail.initiative.id)}</p><div class="title-line"><h1>${esc(detail.initiative.goal)}</h1>${badge(...status(detail))}</div><div class="detail-meta"><span>${esc(detail.config.agent)}</span><span>${count} / ${detail.phases.length} フェーズ完了</span>${detail.usage.total_tokens != null?`<span>${Number(detail.usage.total_tokens).toLocaleString()} tokens</span>`:''}</div></header>
   ${detail.job?.error ? `<p class="notice error">${esc(detail.job.error)}</p>`:''}
   ${current ? `<section class="phase-card"><div class="row"><span class="eyebrow">CURRENT PHASE · ${esc(current.id)}</span><span class="muted">Run ${esc(detail.state.current_run)}</span></div><h2>${esc(current.goal)}</h2><div class="phase-track">${detail.phases.map(p=>`<span class="${esc(p.status)}"></span>`).join('')}</div><p class="muted">${jobActive(detail)?'ローカルPCで処理を進めています。':detail.state.state==='AWAITING_HUMAN_CHECK'?'テストとレビューが完了しました。あなたの判断を待っています。':'実行を再開できます。'}</p></section>`:''}
-  <nav class="tabs" aria-label="案件の表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
-  <div id="tab-content">${tab==='overview'?overviewView():tab==='logs'?`<h3>直近の実行ログ</h3><p class="hint">エラーとCLIの実行結果を表示します。エージェント内部のログはPC側に保存されます。</p><pre class="log">${esc(detail.job_log || '出力はまだありません。')}</pre>`:evidenceView()}</div>${actionBar()}`;
+  <nav class="tabs" aria-label="案件の表示内容">${[['overview','概要'],['files','ファイル'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
+  <div id="tab-content">${tab==='overview'?overviewView():tab==='files'?repositoryView():tab==='logs'?`<h3>直近の実行ログ</h3><p class="hint">エラーとCLIの実行結果を表示します。エージェント内部のログはPC側に保存されます。</p><pre class="log">${esc(detail.job_log || '出力はまだありません。')}</pre>`:evidenceView()}</div>${actionBar()}`;
   $('#back').onclick = () => location.hash = '';
-  document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {tab=button.dataset.tab;renderDetail(true);});
+  document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {tab=button.dataset.tab;renderDetail(true);if(tab==='files'&&repository.initiativeId!==selected)loadRepository();});
+  document.querySelectorAll('[data-file]').forEach(button=>button.onclick=()=>loadRepository(button.dataset.file));
+  if($('#repo-retry'))$('#repo-retry').onclick=()=>{repository.files=null;loadRepository();};
   if ($('#evidence-phase')) $('#evidence-phase').onchange = event => {evidencePhase=event.target.value;renderDetail(true);};
   if ($('#run')) $('#run').onclick = () => action('run');
   if ($('#accept')) $('#accept').onclick = () => action('human-check',{result:'ACCEPT',revision:detail.revision});
@@ -152,7 +190,7 @@ $('#new-form').onsubmit=event=>submitForm(event,async form=>{const job=await api
 $('#feedback-form').onsubmit=event=>submitForm(event,async form=>{await api(pathFor(decisionSnapshot.id)+'/human-check',{request_id:requestId(),result:'FEEDBACK',feedback:form.elements.feedback.value,revision:decisionSnapshot.revision});$('#feedback-dialog').close();form.reset();toast('修正を依頼しました');await refresh();});
 $('#stop-form').onsubmit=event=>submitForm(event,async()=>{await api(pathFor(decisionSnapshot.id)+'/stop',{});$('#stop-dialog').close();toast('停止を受け付けました');await refresh();});
 $('#filters').onclick=event=>{if(!event.target.dataset.filter)return;filter=event.target.dataset.filter;$('#filters .selected').classList.remove('selected');event.target.classList.add('selected');renderList();};
-window.addEventListener('hashchange',()=>{selected=decodeURIComponent(location.hash.slice(1));detail=null;lastRender='';tab='overview';evidencePhase=null;document.body.classList.toggle('has-selection',!!selected);refresh();});
+window.addEventListener('hashchange',()=>{selected=decodeURIComponent(location.hash.slice(1));detail=null;lastRender='';tab='overview';evidencePhase=null;repository={initiativeId:null,files:null,file:null,selectedPath:null,loading:false,error:null};document.body.classList.toggle('has-selection',!!selected);refresh();});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 setInterval(()=>{if(!document.hidden)refresh();},4000);
 
