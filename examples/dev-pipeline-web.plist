@@ -5,20 +5,23 @@
   <key>Label</key><string>local.dev-pipeline.web</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/ABSOLUTE/PATH/dev-pipeline2/.venv/bin/python</string>
+    <string>/Users/natto/Projects/dev-pipeline2/.venv/bin/python</string>
     <string>-m</string><string>dev_pipeline.web_server</string>
-    <string>--work-dir</string><string>/ABSOLUTE/PATH/work</string>
-    <string>--public-url</string><string>https://YOUR-PC.YOUR-TAILNET.ts.net</string>
-    <string>--allow-user</string><string>you@example.com</string>
-    <string>--push-subject</string><string>mailto:you@example.com</string>
+    <string>--work-dir</string><string>/Users/natto/Projects/dev-pipeline2/work</string>
+    <string>--public-url</string><string>https://nattos-laptop-1.tail263992.ts.net</string>
+    <string>--allow-user</string><string>Kota.T@rebelorld.com</string>
+    <string>--push-subject</string><string>mailto:Kota.T@rebelorld.com</string>
   </array>
-  <key>WorkingDirectory</key><string>/ABSOLUTE/PATH/dev-pipeline2</string>
+  <key>WorkingDirectory</key><string>/Users/natto/Projects/dev-pipeline2</string>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>/ABSOLUTE/PATH/dev-pipeline2/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/natto/Projects/dev-pipeline2/.venv/bin:/Applications/ChatGPT.app/Contents/Resources:/Users/natto/.opencode/bin:/Users/natto/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/ABSOLUTE/PATH/logs/pipeline-web.log</string>
-  <key>StandardErrorPath</key><string>/ABSOLUTE/PATH/logs/pipeline-web-error.log</string>
+  <key>StandardOutPath</key><string>/Users/natto/Library/Logs/dev-pipeline-web/pipeline-web.log</string>
+  <key>StandardErrorPath</key><string>/Users/natto/Library/Logs/dev-pipeline-web/pipeline-web-error.log</string>
   <key>ExitTimeOut</key><integer>15</integer>
 </dict>
 </plist>

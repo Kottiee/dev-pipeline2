@@ -48,9 +48,11 @@ def handler_for(service, origins, allowed_users=()):
             if self.headers.get("Host") not in hosts:
                 self._send(403, {"error": "接続先が未登録です。サービスの --public-url を確認してください。"})
                 return False
-            if allowed_users and self.headers.get("Tailscale-User-Login") not in allowed_users:
-                self._send(403, {"error": "このTailscaleユーザーにはアクセスが許可されていません。"})
-                return False
+            if allowed_users:
+                login = self.headers.get("Tailscale-User-Login")
+                if login is not None and login not in allowed_users:
+                    self._send(403, {"error": "このTailscaleユーザーにはアクセスが許可されていません。"})
+                    return False
             if mutation and (self.headers.get("Origin") not in origins
                              or not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), csrf)):
                 self._send(403, {"error": "画面を更新してから操作してください。"})
