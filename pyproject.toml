@@ -12,10 +12,13 @@ license = {text = "MIT"}
 
 [project.scripts]
 dev-pipeline = "dev_pipeline.cli:main"
+dev-pipeline-web = "dev_pipeline.web_server:main"
+
+[project.optional-dependencies]
+web = ["pywebpush>=2.0,<3"]
 
 [tool.setuptools.packages.find]
 include = ["dev_pipeline*"]
 
 [tool.setuptools.package-data]
-dev_pipeline = ["prompts/*.txt"]
-
+dev_pipeline = ["prompts/*.txt", "webui/*"]

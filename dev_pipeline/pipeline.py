@@ -171,7 +171,7 @@ class Pipeline:
         if decision == "PASS" and findings:
             raise ValueError("PASS review must not contain findings")
         self.store.write_json(f"evidence/{phase.id}-adversarial-review.json", {
-            "phase_id": phase.id, "result": decision, "findings": findings,
+            "phase_id": phase.id, "run_id": state.current_run, "result": decision, "findings": findings,
             "created_at": now_iso(),
         })
         self.store.write_text(f"evidence/{phase.id}-review-agent.log", result.stdout + result.stderr)
@@ -184,8 +184,11 @@ class Pipeline:
         self.store.save_state(state)
         return decision == "PASS"
 
-    def human_check(self, result: str, feedback: str | None = None) -> str:
+    def human_check(self, result: str, feedback: str | None = None,
+                    expected_revision: str | None = None) -> str:
         state = self.store.load_state()
+        if expected_revision is not None and state.revision() != expected_revision:
+            raise TransitionError("確認後に状態が更新されています。最新の結果を確認してください")
         if state.state != "AWAITING_HUMAN_CHECK" or not state.current_phase:
             raise TransitionError("human check is only allowed for a ready phase")
         if result not in {"ACCEPT", "FEEDBACK"}:

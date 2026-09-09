@@ -4,6 +4,8 @@ import json
 import os
 import re
 import tempfile
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,20 @@ class WorkStore:
         self.root = root.resolve()
         self.initiative_id = initiative_id
         self.path = self.root / initiative_id
+
+    @contextmanager
+    def execution_lock(self):
+        """Serialize CLI mutations, including long agent calls, across processes."""
+        self.path.mkdir(parents=True, exist_ok=True)
+        with (self.path / ".execution.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ValueError("この案件は別のプロセスで実行中です") from error
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def create(self, initiative: Initiative, phases: list[Phase]) -> None:
         # A repository may already have been prepared beneath this directory.

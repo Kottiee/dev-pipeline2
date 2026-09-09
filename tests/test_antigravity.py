@@ -50,7 +50,8 @@ class AntigravityTests(unittest.TestCase):
         self.assertEqual("PASS", result.data["result"])
         args = run.call_args.args[0]
         self.assertEqual(["agy", "--input-format", "stream-json",
-                          "--output-format", "stream-json"], args)
+                          "--output-format", "stream-json",
+                          "--print-timeout", "40m"], args)
         payload = json.loads(run.call_args.kwargs["input"])
         self.assertEqual("user", payload["event"])
         self.assertEqual("review", payload["message"]["content"])
@@ -67,6 +68,18 @@ class AntigravityTests(unittest.TestCase):
         self.assertEqual("GOAL_REACHED", data["result"])
         self.assertEqual(["agy-wrapper", "--dangerously-skip-permissions",
                           "--input-format", "stream-json",
+                          "--output-format", "stream-json",
+                          "--print-timeout", "40m"],
+                         run.call_args.args[0])
+
+    def test_command_override_respects_explicit_print_timeout(self):
+        agent = create_agent("antigravity", "agy --print-timeout 10m")
+        with patch("dev_pipeline.agents.process.subprocess.run", return_value=completed(
+            agy_output('{"result":"GOAL_REACHED"}'))) as run:
+            data = agent.execute("implement", self.repo).data
+        self.assertEqual("GOAL_REACHED", data["result"])
+        self.assertEqual(["agy", "--print-timeout", "10m",
+                          "--input-format", "stream-json",
                           "--output-format", "stream-json"],
                          run.call_args.args[0])
 
@@ -80,10 +93,10 @@ class AntigravityTests(unittest.TestCase):
         self.assertEqual(1, len(result.data["findings"]))
 
     def test_non_success_status_is_an_error(self):
-        output = agy_output("", status="ERROR", error="authentication required")
+        output = agy_output("", status="ERROR", error="timeout waiting for response")
         with patch("dev_pipeline.agents.process.subprocess.run",
-                   return_value=completed(output)) as run:
-            with self.assertRaisesRegex(AgentError, "status ERROR.*authentication required"):
+                   return_value=completed(output, code=1)) as run:
+            with self.assertRaisesRegex(AgentError, "status ERROR.*timeout waiting for response"):
                 self.agent.execute("implement", self.repo)
         run.assert_called_once()
 

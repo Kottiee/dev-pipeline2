@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from .agents import AgentError, create_agent
@@ -107,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     human.add_argument("id")
     human.add_argument("result", choices=("ACCEPT", "FEEDBACK"))
     human.add_argument("--feedback")
+    human.add_argument("--expected-revision", help="reject a decision made against stale state")
 
     status = sub.add_parser("status", help="show durable pipeline state")
     status.add_argument("id")
@@ -142,6 +144,16 @@ def _show(store: WorkStore) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        store = WorkStore(Path(args.work_dir), getattr(args, "id", ""))
+        with (nullcontext() if args.command in {"status", "show"} else store.execution_lock()):
+            return _execute(args)
+    except (ValueError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+
+def _execute(args: argparse.Namespace) -> int:
     try:
         if args.token_usage_format is not None:
             resolve_token_usage_format(args.token_usage_format)
@@ -192,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             print("PASS" if passed else "FINDINGS")
             return 0 if passed else 1
         elif args.command == "human-check":
-            print(pipeline.human_check(args.result, args.feedback))
+            print(pipeline.human_check(args.result, args.feedback, args.expected_revision))
         return 0
     except (AgentError, TransitionError, ValueError, FileNotFoundError, FileExistsError) as error:
         print(f"error: {error}", file=sys.stderr)

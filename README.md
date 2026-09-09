@@ -34,7 +34,7 @@ Human Checkは自動承認せず、`human-check` でACCEPTまたはFEEDBACKを�
 * RunごとにMarkdown CheckpointとAgentログを保存
 * 任意個のbuild/test/lintコマンドを実行し、結果とログをEvidenceとして保存
 * 実装時とは独立したAgent呼び出しで、Reject理由を探す敵対的レビューを実行
-* `ACCEPT` で次Phaseを自動開始し、`FEEDBACK` で同じPhaseのFix Runを開始
+* `ACCEPT` で次Phaseへ状態を更新し、`FEEDBACK` で同じPhaseの修正待ちへ更新（Web運用では続けてRunを自動起動）
 * stdin/stdoutの共通契約を介したCodex/OpenCodeアダプター
 * JSONのatomic writeによる、Sessionに依存しない再開可能な状態管理
 
@@ -42,6 +42,24 @@ Human Checkは自動承認せず、`human-check` でACCEPTまたはFEEDBACKを�
 
 * Python 3.11以上
 * 利用するAgent CLI (`codex` または `opencode`) とその認証
+
+## スマホから運用する
+
+ローカル常駐サービスとスマホ向けPWAを追加しています。案件の開始・再開、テスト／レビュー結果の確認、
+フェーズ承認・修正依頼、実行停止、Web Push通知に対応します。成果物のプレビューは行いません。
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[web]'
+dev-pipeline-web --work-dir /絶対パス/work
+```
+
+PCでは `http://127.0.0.1:8787` から確認できます。
+**[構成図・スマホ接続・通知・Mac常駐化の手順](docs/mobile-operations.md)** を参照してください。
+Web UIは既存CLIと状態を共有し、承認後の次Runを常駐サービスが起動します。
+
+## CLIのセットアップ
 
 以降の例はインストール不要のモジュール実行形式 `python3 -m dev_pipeline.cli` で表記します。
 リポジトリルートから実行してください（`--repo` 等の相対パスは起動ディレクトリ基準のため）。
@@ -186,6 +204,9 @@ python3 -m dev_pipeline.cli human-check INIT-001 ACCEPT
 # 修正が必要なら同じPhaseを継続
 python3 -m dev_pipeline.cli human-check INIT-001 FEEDBACK \
   --feedback "検索後に戻っても条件を保持してほしい"
+
+# CLI単独の運用では、判断後に次Phaseまたは修正Runを起動する（COMPLETEDなら不要）
+python3 -m dev_pipeline.cli run INIT-001 --until-ready
 ```
 
 検証とレビューはトラブルシュート用に個別実行もできます。
