@@ -33,10 +33,10 @@ function jobActive(item) { return ACTIVE.includes(item.job?.status); }
 function status(item) {
   if (item.job?.status === 'stopping') return ['停止中','running'];
   if (item.job?.status === 'queued') return ['開始待ち','running'];
-  if (item.job?.status === 'running') return [item.state.state === 'PLANNING' ? '計画中' : ['AWAITING_HUMAN_CHECK','COMPLETED'].includes(item.state.state) ? '状態を更新中' : (states[item.state.state] || '実行') + '中','running'];
+  if (item.job?.status === 'running') return [item.state.state === 'PLANNING' ? '計画中' : !item.actions.run ? '状態を更新中' : (states[item.state.state] || '実行') + '中','running'];
   if (['failed','interrupted'].includes(item.job?.status)) return [item.job.status === 'failed' ? '実行エラー' : '中断','error'];
-  if (item.state.state === 'COMPLETED') return ['完了','success'];
-  if (item.state.state === 'AWAITING_HUMAN_CHECK') return ['承認待ち','waiting'];
+  if (item.actions.completed) return ['完了','success'];
+  if (item.actions.human_check) return ['承認待ち','waiting'];
   return [item.job?.status === 'stopped' ? '停止済み' : '実行待ち',''];
 }
 const badge = (label, kind='') => `<span class="badge ${esc(kind)}">${esc(label)}</span>`;
@@ -45,11 +45,11 @@ function renderList() {
   const signature=JSON.stringify([items,filter,selected]);
   if(signature===lastList)return;
   lastList=signature;
-  const waiting = items.filter(item => item.state.state === 'AWAITING_HUMAN_CHECK' && !jobActive(item)).length;
+  const waiting = items.filter(item => item.actions.human_check && !jobActive(item)).length;
   const active = items.filter(jobActive).length;
   $('#summary').innerHTML = `<div class="metric waiting"><span>あなたの確認待ち</span><strong>${waiting}</strong></div><div class="metric"><span>実行中</span><strong>${active}</strong></div>`;
-  const shown = items.filter(item => filter === 'all' || filter === 'waiting' && item.state.state === 'AWAITING_HUMAN_CHECK' && !jobActive(item) || filter === 'active' && jobActive(item) || filter === 'done' && item.state.state === 'COMPLETED');
-  shown.sort((a,b) => Number(b.state.state === 'AWAITING_HUMAN_CHECK') - Number(a.state.state === 'AWAITING_HUMAN_CHECK') || (b.job?.created_at || '').localeCompare(a.job?.created_at || ''));
+  const shown = items.filter(item => filter === 'all' || filter === 'waiting' && item.actions.human_check && !jobActive(item) || filter === 'active' && jobActive(item) || filter === 'done' && item.actions.completed);
+  shown.sort((a,b) => Number(b.actions.human_check) - Number(a.actions.human_check) || (b.job?.created_at || '').localeCompare(a.job?.created_at || ''));
   $('#initiative-list').innerHTML = shown.length ? shown.map(item => {
     const id = item.initiative.id, accepted = item.phases.filter(phase => phase.status === 'accepted').length;
     return `<a class="initiative-card ${id === selected ? 'selected':''}" href="#${encodeURIComponent(id)}"><div class="card-top"><span class="id">${esc(id)}</span>${badge(...status(item))}</div><h3>${esc(item.initiative.goal)}</h3><div class="card-bottom"><span>${accepted} / ${item.phases.length} フェーズ完了</span><span class="phase-dots">${item.phases.map(p => `<i class="${esc(p.status)}"></i>`).join('')}</span></div></a>`;
@@ -82,8 +82,8 @@ function overviewView() {
 function actionBar() {
   const disabled = submitting ? 'disabled' : '';
   if (jobActive(detail)) return `<div class="action-bar"><p class="action-note">画面を閉じても実行は続きます</p><div><button class="button danger" id="stop-open" ${detail.job.status==='stopping'?'disabled':''}>${detail.job.status==='stopping'?'停止しています…':'実行を停止'}</button></div></div>`;
-  if (detail.state.state === 'COMPLETED') return '<div class="action-bar"><p class="action-note">すべてのフェーズが承認されました</p><div>'+badge('完了','success')+'</div></div>';
-  if (detail.state.state === 'AWAITING_HUMAN_CHECK') return `<div class="action-bar"><p class="action-note">テスト・レビュー結果を確認して判断</p><div><button class="button" id="feedback-open" ${disabled}>修正を依頼</button><button class="button primary" id="accept" ${disabled}>承認して${detail.phases.at(-1)?.id===detail.state.current_phase?'完了':'次へ'}</button></div></div>`;
+  if (detail.actions.completed) return '<div class="action-bar"><p class="action-note">すべてのフェーズが承認されました</p><div>'+badge('完了','success')+'</div></div>';
+  if (detail.actions.human_check) return `<div class="action-bar"><p class="action-note">テスト・レビュー結果を確認して判断</p><div><button class="button" id="feedback-open" ${disabled}>修正を依頼</button><button class="button primary" id="accept" ${disabled}>承認して${detail.phases.at(-1)?.id===detail.state.current_phase?'完了':'次へ'}</button></div></div>`;
   return `<div class="action-bar"><p class="action-note">保存済みの状態から進めます</p><div><button class="button primary" id="run" ${disabled}>${detail.job?.status==='failed'?'再実行':'実行を開始・再開'}</button></div></div>`;
 }
 function renderDetail(force = false) {
@@ -100,7 +100,7 @@ function renderDetail(force = false) {
   const count = detail.phases.filter(p => p.status === 'accepted').length;
   $('#detail-pane').innerHTML = `<button class="back" id="back">← 案件一覧</button><header class="detail-header"><p class="id">${esc(detail.initiative.id)}</p><div class="title-line"><h1>${esc(detail.initiative.goal)}</h1>${badge(...status(detail))}</div><div class="detail-meta"><span>${esc(detail.config.agent)}</span><span>${count} / ${detail.phases.length} フェーズ完了</span>${detail.usage.total_tokens != null?`<span>${Number(detail.usage.total_tokens).toLocaleString()} tokens</span>`:''}</div></header>
   ${detail.job?.error ? `<p class="notice error">${esc(detail.job.error)}</p>`:''}
-  ${current ? `<section class="phase-card"><div class="row"><span class="eyebrow">CURRENT PHASE · ${esc(current.id)}</span><span class="muted">Run ${esc(detail.state.current_run)}</span></div><h2>${esc(current.goal)}</h2><div class="phase-track">${detail.phases.map(p=>`<span class="${esc(p.status)}"></span>`).join('')}</div><p class="muted">${jobActive(detail)?'ローカルPCで処理を進めています。':detail.state.state==='AWAITING_HUMAN_CHECK'?'テストとレビューが完了しました。あなたの判断を待っています。':'実行を再開できます。'}</p></section>`:''}
+  ${current ? `<section class="phase-card"><div class="row"><span class="eyebrow">CURRENT PHASE · ${esc(current.id)}</span><span class="muted">Run ${esc(detail.state.current_run)}</span></div><h2>${esc(current.goal)}</h2><div class="phase-track">${detail.phases.map(p=>`<span class="${esc(p.status)}"></span>`).join('')}</div><p class="muted">${jobActive(detail)?'ローカルPCで処理を進めています。':detail.actions.human_check?'テストとレビューが完了しました。あなたの判断を待っています。':'実行を再開できます。'}</p></section>`:''}
   <nav class="tabs" aria-label="案件の表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
   <div id="tab-content">${tab==='overview'?overviewView():tab==='logs'?`<h3>直近の実行ログ</h3><p class="hint">エラーとCLIの実行結果を表示します。エージェント内部のログはPC側に保存されます。</p><pre class="log">${esc(detail.job_log || '出力はまだありません。')}</pre>`:evidenceView()}</div>${actionBar()}`;
   $('#back').onclick = () => location.hash = '';

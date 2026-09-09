@@ -14,7 +14,14 @@ from pathlib import Path
 
 from .models import now_iso
 from .notifications import Notifications
-from .store import WorkStore
+from .reporting import (
+    available_actions,
+    default_repository,
+    initiative_exists,
+    list_initiative_ids,
+    read_pipeline,
+)
+from .store import JsonStore
 
 AGENTS = ("codex", "opencode", "antigravity")
 ACTIVE = {"queued", "running", "stopping"}
@@ -47,7 +54,7 @@ class WebService:
         except BlockingIOError as error:
             self.instance_lock.close()
             raise Conflict("このwork-dirのWebサービスは既に起動しています") from error
-        self.store = WorkStore(self.directory, "")
+        self.store = JsonStore(self.directory)
         self.default_agent = agent
         self.lock = threading.RLock()
         self.processes = {}
@@ -85,15 +92,10 @@ class WebService:
         self.notifications.close()
         self.instance_lock.close()
 
-    def _work(self, initiative_id):
-        if not initiative_id:
-            raise ValueError("案件IDが必要です")
-        return WorkStore(self.work_dir, initiative_id)
-
     def _config(self, initiative_id):
         return self.configs.get(initiative_id, {
             "agent": self.default_agent,
-            "repository": str(self._work(initiative_id).path / "repo"),
+            "repository": str(default_repository(self.work_dir, initiative_id)),
         })
 
     def _latest(self, initiative_id):
@@ -138,8 +140,7 @@ class WebService:
                 if job["action"] == "init" and job["request_id"] == request_id:
                     return job.copy()
             initiative_id = text_field(data, "id", 128) or "INIT-" + uuid.uuid4().hex[:12]
-            work = self._work(initiative_id)
-            if initiative_id in self.configs or (work.path / "initiative.json").exists():
+            if initiative_id in self.configs or initiative_exists(self.work_dir, initiative_id):
                 raise Conflict("この案件IDは既に使われています")
             agent = text_field(data, "agent", 30) or self.default_agent
             if agent not in AGENTS:
@@ -150,7 +151,7 @@ class WebService:
                 if not repo.is_dir():
                     raise ValueError("既存リポジトリのディレクトリが存在しません")
             else:
-                repo = work.path / "repo"
+                repo = default_repository(self.work_dir, initiative_id)
             config = {"request": text_field(data, "request", required=True),
                       "requirements": text_field(data, "requirements"),
                       "constraints": text_field(data, "constraints"),
@@ -169,11 +170,10 @@ class WebService:
             detail = self.detail(initiative_id)
             config = self._config(initiative_id).copy()
             self._idle(initiative_id, config["repository"])
-            state = detail["state"]
             extra = []
             if action == "human-check":
                 revision = text_field(data, "revision", 64, True)
-                if state["state"] != "AWAITING_HUMAN_CHECK" or revision != detail["revision"]:
+                if not detail["actions"]["human_check"] or revision != detail["revision"]:
                     raise Conflict("確認後に状態が更新されています。最新の結果を確認してください")
                 result = text_field(data, "result", 16, True)
                 if result not in ("ACCEPT", "FEEDBACK"):
@@ -182,9 +182,9 @@ class WebService:
                 if result == "FEEDBACK":
                     extra += ["--feedback", text_field(data, "feedback", required=True)]
             elif action == "run":
-                if state["state"] in ("AWAITING_HUMAN_CHECK", "COMPLETED"):
+                if not detail["actions"]["run"]:
                     raise Conflict("この状態では実行できません。最新の状態を確認してください")
-                if not (self._work(initiative_id).path / "state.json").exists():
+                if not initiative_exists(self.work_dir, initiative_id):
                     if not config.get("request"):
                         raise ValueError("案件の初期化情報がありません")
                     action = "init"
@@ -283,8 +283,8 @@ class WebService:
                     command = base + ["run", initiative_id, "--until-ready"]
                 code = self._process(job_id, command, output)
                 if code == 0 and action == "human-check" and not self.cancels[job_id].is_set():
-                    state = self._work(initiative_id).load_state()
-                    if state.state != "COMPLETED":
+                    pipeline = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
+                    if pipeline["actions"]["run"]:
                         code = self._process(job_id, base + ["run", initiative_id, "--until-ready"], output)
         except Exception as exc:
             error = str(exc)
@@ -302,9 +302,10 @@ class WebService:
             self.notifications.notify("実行を停止しました", f"{initiative_id} は保存済み状態から再開できます。", initiative_id)
         else:
             try:
-                state = self._work(initiative_id).load_state()
-                title = "承認待ち" if state.state == "AWAITING_HUMAN_CHECK" else "案件が完了しました"
-                self.notifications.notify(title, f"{initiative_id} / {state.current_phase or '完了'}", initiative_id)
+                pipeline = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
+                title = "承認待ち" if pipeline["actions"]["human_check"] else "案件が完了しました"
+                phase = pipeline["state"]["current_phase"] or "完了"
+                self.notifications.notify(title, f"{initiative_id} / {phase}", initiative_id)
             except (ValueError, OSError):
                 pass
 
@@ -327,7 +328,7 @@ class WebService:
             return self._stop(self.jobs[job["id"]])
 
     @staticmethod
-    def _text(path, limit=100000):
+    def _job_log(path, limit=100000):
         try:
             with path.open("rb") as stream:
                 size = path.stat().st_size
@@ -340,55 +341,39 @@ class WebService:
 
     def detail(self, initiative_id, include_evidence=True):
         with self.lock:
-            work = self._work(initiative_id)
             try:
-                state = work.load_state()
-                initiative = work.load_initiative()
-                phases = [work.load_phase(p).as_dict() for p in initiative.phase_order]
-                result = {"initiative": initiative.as_dict(), "state": state.as_dict(),
-                          "revision": state.revision(), "phases": phases,
-                          "usage": work.load_token_usage()}
+                result = read_pipeline(self.work_dir, initiative_id, include_evidence)
             except FileNotFoundError:
                 config = self.configs.get(initiative_id)
                 if not config:
                     raise FileNotFoundError("案件が見つかりません")
                 result = {"initiative": {"id": initiative_id, "goal": config.get("request", "初期化中")},
                           "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
-                          "revision": None, "phases": [], "usage": {}}
+                          "revision": None, "phases": [], "usage": {},
+                          "actions": available_actions("PLANNING")}
+                if include_evidence:
+                    result.update(evidence=[], checkpoint="")
             job = self._latest(initiative_id)
             if not include_evidence:
                 return {**result, "job": job}
-            result.update(job=job, config=self._config(initiative_id), evidence=[], checkpoint="",
-                          job_log=self._text(self.directory / "job-logs" / f"{job['id']}.log") if job else "")
-            for phase in result["phases"]:
-                evidence = {"phase_id": phase["id"], "verification": None, "review": None,
-                            "verification_log": ""}
-                for key, suffix in (("verification", "verification"), ("review", "adversarial-review")):
-                    try:
-                        evidence[key] = work.read_json(f"evidence/{phase['id']}-{suffix}.json")
-                    except FileNotFoundError:
-                        pass
-                evidence["verification_log"] = self._text(work.path / "evidence" / f"{phase['id']}-verification.log")
-                result["evidence"].append(evidence)
-            phase_id = result["state"].get("current_phase")
-            if phase_id:
-                checkpoints = sorted((work.path / "runs").glob(f"{phase_id}-run-*.md"),
-                                     key=lambda p: int(p.stem.rsplit("-", 1)[1]))
-                if checkpoints:
-                    result["checkpoint"] = self._text(checkpoints[-1])
+            result.update(job=job, config=self._config(initiative_id),
+                          job_log=self._job_log(
+                              self.directory / "job-logs" / f"{job['id']}.log") if job else "")
             return result
 
     def list_initiatives(self):
         with self.lock:
             ids = set(self.configs)
-            ids.update(p.name for p in self.work_dir.iterdir()
-                       if p.is_dir() and not p.name.startswith(".") and (p / "initiative.json").exists())
+            ids.update(list_initiative_ids(self.work_dir))
             result = []
             for initiative_id in sorted(ids):
                 try:
                     detail = self.detail(initiative_id, include_evidence=False)
-                    result.append({k: detail[k] for k in ("initiative", "state", "job", "phases")})
+                    result.append({k: detail[k] for k in
+                                   ("initiative", "state", "actions", "job", "phases")})
                 except (OSError, ValueError, TypeError) as error:
                     result.append({"initiative": {"id": initiative_id, "goal": "状態の読み取りエラー"},
-                                   "state": {"state": "FAILED"}, "job": None, "phases": [], "error": str(error)})
+                                   "state": {"state": "FAILED"},
+                                   "actions": {"run": False, "human_check": False, "completed": False},
+                                   "job": None, "phases": [], "error": str(error)})
             return result
