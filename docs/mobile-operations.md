@@ -85,19 +85,39 @@ iPhoneで通知を使う場合は、Safariの共有メニューから「ホー�
 
 通知は端末の集中モード、通信状態、OS設定の影響を受けます。通知が届かない場合でも、案件一覧の表示を正式な状態として確認してください。
 
-## 管理者向け初回設定
+## 管理者向け設定と運用
 
 ここからは、利用者へURLを案内する管理者向けです。通常の業務担当者が行う作業ではありません。
 
-### PC内で起動する
+### 環境分離構成（Run / Dev / Work）
 
-Python 3.11以上、Git、利用するAIエージェントを準備し、認証を済ませます。
+安全な運用のために、実行環境、開発環境、作業データを3つに分離します。いずれも `~/Projects/` 配下に配置します。
+
+| 区分 | 役割 | ディレクトリ |
+|---|---|---|
+| **Run環境** | launchd が常時動かす本番実行コード | `~/Projects/dev-pipeline2-runtime`（`main` ブランチ固定） |
+| **Dev環境** | 開発者の編集・ブランチ切替・テスト | `~/Projects/dev-pipeline2` |
+| **Work** | 案件データ・成果物リポジトリ・ログ | `~/Projects/dev-pipeline2-data` |
+
+開発環境でブランチの切り替えやソース編集を行っても、実行中のRunや次回Runに干渉しません。
+
+### PC内で起動する（Run環境）
+
+Python 3.11以上、Git、利用するAIエージェントを準備し、認証を済ませます。実行用の安定チェックアウトとデータディレクトリを用意します。
 
 ```bash
+# 実行環境のセットアップ (main ブランチ固定)
+git clone https://github.com/Kottiee/dev-pipeline2.git ~/Projects/dev-pipeline2-runtime
+cd ~/Projects/dev-pipeline2-runtime
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[web]'
-dev-pipeline-web --work-dir /絶対パス/work
+
+# データディレクトリ作成（新規環境の場合）
+mkdir -p ~/Projects/dev-pipeline2-data
+
+# 起動確認
+dev-pipeline-web --work-dir /Users/natto/Projects/dev-pipeline2-data
 ```
 
 PCのブラウザーで `http://127.0.0.1:8787` を開き、画面が表示されることを確認します。
@@ -113,8 +133,8 @@ tailscale serve --bg 8787
 表示されたHTTPS URLと、利用を許可するTailscaleログイン名を指定してサービスを起動します。
 
 ```bash
-dev-pipeline-web \
-  --work-dir /絶対パス/work \
+~/Projects/dev-pipeline2-runtime/.venv/bin/dev-pipeline-web \
+  --work-dir ~/Projects/dev-pipeline2-data \
   --public-url https://YOUR-PC.YOUR-TAILNET.ts.net \
   --allow-user user@example.com \
   --push-subject mailto:admin@example.com
@@ -127,3 +147,41 @@ dev-pipeline-web \
 サービスをmacOSへのログイン時に起動し、終了時に再起動する場合は、[launchd常時起動ガイド](launchd.md)に従って同梱の `examples/dev-pipeline-web.plist` を設定・登録します。
 
 PCがスリープ、ログアウト、電源切れ、ネットワーク切断になると利用できません。TailscaleやAIサービスの認証切れもplistだけでは復旧しません。
+
+### コードの更新手順（デプロイ）
+
+開発環境（Dev）で機能追加や修正を行った後の本番反映手順です。
+
+1. **開発とテスト**: `~/Projects/dev-pipeline2` で実装し、テストをパスすることを確認します。
+2. **マージ**: GitHubの `main` ブランチへマージ（またはプッシュ）します。
+3. **実行環境へ反映**:
+   ```bash
+   cd ~/Projects/dev-pipeline2-runtime
+   git pull origin main
+   # 依存関係に変更がある場合のみ
+   .venv/bin/pip install -e '.[web]'
+   ```
+4. **サービスの再起動**:
+   実行中ジョブがないタイミングで launchd サービスを再起動します。
+   ```bash
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.dev-pipeline.web.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.dev-pipeline.web.plist
+   ```
+
+### 開発環境（Dev）での動作確認
+
+開発環境（`~/Projects/dev-pipeline2`）でWebサーバーやCLIの動作確認を行う際は、本番データ（`dev-pipeline2-data`）に影響を与えないよう、必ず別の `--work-dir` を指定してください。また、launchdで本番サーバーがポート8787で稼働している場合は、別のポートを指定します。
+
+```bash
+cd ~/Projects/dev-pipeline2
+source .venv/bin/activate
+
+# 開発用の別work-dirとポートでWebサーバーを起動
+dev-pipeline-web --work-dir ~/Projects/dev-pipeline2-dev-work --port 8788
+```
+
+CLIで動作確認する場合も同様に開発用ディレクトリを指定します。
+
+```bash
+dev-pipeline --work-dir ~/Projects/dev-pipeline2-dev-work status <案件ID>
+```

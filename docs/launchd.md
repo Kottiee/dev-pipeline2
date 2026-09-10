@@ -13,9 +13,9 @@
 まずlaunchdを使わずに起動確認します。
 
 ```bash
-/絶対パス/dev-pipeline2/.venv/bin/python \
+/絶対パス/dev-pipeline2-runtime/.venv/bin/python \
   -m dev_pipeline.web_server \
-  --work-dir /絶対パス/work
+  --work-dir /絶対パス/dev-pipeline2-data
 ```
 
 `http://127.0.0.1:8787` を開けることを確認し、`Ctrl+C` で停止します。
@@ -51,7 +51,7 @@ cp examples/dev-pipeline-web.plist \
 | `--public-url` | Tailscale Serveが表示したHTTPS URL。ローカル専用なら引数ごと削除 |
 | `--allow-user` | 許可するTailscaleログイン名。複数人は引数を繰り返す |
 | `--push-subject` | Web Push管理者の連絡先（例: `mailto:admin@example.com`） |
-| `WorkingDirectory` | このプロジェクトの絶対パス |
+| `WorkingDirectory` | 実行環境プロジェクトの絶対パス（例: `~/Projects/dev-pipeline2-runtime`） |
 | `PATH` | 仮想環境とAgent CLIを含む検索パス |
 | `StandardOutPath` | 標準出力ログの絶対パス |
 | `StandardErrorPath` | 標準エラーログの絶対パス |
@@ -151,7 +151,7 @@ tail -n 100 ~/Library/Logs/dev-pipeline-web/pipeline-web-error.log
 plistと同じPATHで3つのAgentを解決できるか確認する例：
 
 ```bash
-env PATH="/Users/natto/Projects/dev-pipeline2/.venv/bin:/Applications/ChatGPT.app/Contents/Resources:/Users/natto/.opencode/bin:/Users/natto/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+env PATH="/Users/natto/Projects/dev-pipeline2-runtime/.venv/bin:/Applications/ChatGPT.app/Contents/Resources:/Users/natto/.opencode/bin:/Users/natto/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
   /bin/zsh -c 'command -v codex; command -v opencode; command -v agy'
 ```
 
