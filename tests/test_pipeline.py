@@ -8,7 +8,7 @@ from unittest.mock import patch
 from subprocess import CompletedProcess
 
 from dev_pipeline.agents import AgentResult, CodexAgent
-from dev_pipeline.agents.base import extract_json
+from dev_pipeline.agents.base import AgentError, extract_json
 from dev_pipeline.cli import main
 from dev_pipeline.pipeline import Pipeline, TransitionError
 from dev_pipeline.store import WorkStore
@@ -21,13 +21,35 @@ PHASES = [
 
 
 class FakeAgent:
-    def __init__(self, replies):
+    def __init__(self, replies, summary_replies=None):
         self.replies = iter(replies)
+        self.summary_replies = iter(summary_replies) if summary_replies is not None else None
         self.prompts = []
 
     def execute(self, prompt, repository):
         self.prompts.append(prompt)
-        data = next(self.replies)
+        if prompt.startswith("Create a concise Japanese summary"):
+            if self.summary_replies is not None:
+                data = next(self.summary_replies)
+                if isinstance(data, Exception):
+                    raise data
+            else:
+                findings = list(range(1, prompt.count('"id":') + 1))
+                data = {
+                    "recommendation": "REQUEST_CHANGES" if findings else "APPROVE",
+                    "decision_reason": "修正要否を判断できます",
+                    "affected_scope": "対象フェーズの操作とデータ",
+                    "required_action": "指摘を確認して判断してください",
+                    "items": [{
+                        "finding_ids": findings,
+                        "problem": "期待した結果になりません",
+                        "business_impact": "業務を完了できない可能性があります",
+                        "affected_scope": "対象の操作とデータ",
+                        "required_action": "修正を依頼してください",
+                    }] if findings else [],
+                }
+        else:
+            data = next(self.replies)
         return AgentResult(data, json.dumps(data), "")
 
 
@@ -115,6 +137,53 @@ class PipelineTests(unittest.TestCase):
         pipeline.verify([("ok", "python -c 'print(1)'")])
         self.assertFalse(pipeline.review())
         self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
+        original = self.store.read_json("evidence/phase-01-adversarial-review.json")
+        summary = self.store.read_json("evidence/phase-01-review-summary.json")
+        self.assertEqual("broken", original["findings"][0]["description"])
+        self.assertEqual("SUCCESS", summary["status"])
+        self.assertEqual("REQUEST_CHANGES", summary["recommendation"])
+        self.assertEqual([1], summary["items"][0]["finding_ids"])
+        self.assertIn('"id": 1', agent.prompts[1])
+        self.assertIn("Issue goal: ship", agent.prompts[1])
+
+    def test_summary_failure_does_not_block_passed_review_or_approval(self):
+        agent = FakeAgent(
+            [{"result": "PASS", "findings": []}],
+            summary_replies=[AgentError("summary unavailable")],
+        )
+        pipeline = Pipeline(self.store, self.root, agent)
+        pipeline.verify([("ok", "python -c 'print(1)'")])
+        self.assertTrue(pipeline.review())
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
+        self.assertEqual("PASS", self.store.read_json(
+            "evidence/phase-01-adversarial-review.json")["result"])
+        summary = self.store.read_json("evidence/phase-01-review-summary.json")
+        self.assertEqual("FAILED", summary["status"])
+        self.assertEqual("要約を生成できませんでした", summary["error"])
+        self.assertEqual("PHASE_RUNNING", pipeline.human_check("ACCEPT"))
+
+    def test_summary_with_incomplete_finding_mapping_is_rejected_without_stopping_review(self):
+        findings = [
+            {"severity": "high", "description": "first", "recommendation": "fix first"},
+            {"severity": "low", "description": "second", "recommendation": "fix second"},
+        ]
+        invalid_summary = {
+            "recommendation": "REQUEST_CHANGES",
+            "decision_reason": "修正が必要です",
+            "affected_scope": "利用操作",
+            "required_action": "修正を依頼してください",
+            "items": [{"finding_ids": [1], "problem": "問題", "business_impact": "影響",
+                       "affected_scope": "範囲", "required_action": "対応"}],
+        }
+        pipeline = Pipeline(
+            self.store, self.root,
+            FakeAgent([{"result": "FINDINGS", "findings": findings}], [invalid_summary]),
+        )
+        pipeline.verify([("ok", "python -c 'print(1)'")])
+        self.assertFalse(pipeline.review())
+        self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
+        self.assertEqual("FAILED", self.store.read_json(
+            "evidence/phase-01-review-summary.json")["status"])
 
     def test_pass_with_findings_is_not_accepted(self):
         agent = FakeAgent([{"result": "PASS", "findings": [{"description": "broken"}]}])
@@ -148,10 +217,12 @@ class PipelineTests(unittest.TestCase):
         ])
         pipeline = Pipeline(self.store, self.root, agent)
         self.assertEqual("READY", pipeline.run_until_ready([("test", "python -c 'print(1)'")]))
-        self.assertIn("finish feature", agent.prompts[1])
-        self.assertIn("missing behavior", agent.prompts[3])
-        self.assertIn("repair behavior", agent.prompts[3])
-        self.assertIn("verification.log", agent.prompts[3])
+        run_prompts = [prompt for prompt in agent.prompts
+                       if prompt.startswith("You are the implementation agent")]
+        self.assertIn("finish feature", run_prompts[1])
+        self.assertIn("missing behavior", run_prompts[2])
+        self.assertIn("repair behavior", run_prompts[2])
+        self.assertIn("verification.log", run_prompts[2])
         self.assertEqual(3, self.store.load_state().current_run)
         self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
         self.assertEqual("pending", self.store.load_phase("phase-02").status)

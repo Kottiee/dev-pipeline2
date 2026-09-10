@@ -39,6 +39,18 @@ class PromptRenderingTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             render_prompt("planner", request="only")
 
+    def test_review_summary_requests_business_language_and_finding_links(self):
+        summary = render_prompt(
+            "review-summary", goal="ship", requirements='["works"]',
+            phase_goal="checkout", acceptance_criteria='["can pay"]',
+            review_result="FINDINGS",
+            findings='[{"id": 1, "description": "timeout"}]',
+        )
+        self.assertIn("business owner", summary)
+        self.assertIn("Every finding id", summary)
+        self.assertIn('"finding_ids":[1]', summary)
+        self.assertNotIn("$", summary)
+
     def test_environment_override_directory_is_used(self):
         with tempfile.TemporaryDirectory() as directory:
             custom = Path(directory)
@@ -48,7 +60,7 @@ class PromptRenderingTests(unittest.TestCase):
                                  render_prompt("planner", request="hi"))
 
     def test_bundled_templates_exist_for_all_stages(self):
-        for name in ("planner", "run", "review"):
+        for name in ("planner", "run", "review", "review-summary"):
             self.assertTrue((DEFAULT_PROMPTS_DIR / f"{name}.txt").is_file())
 
 

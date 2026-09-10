@@ -37,6 +37,9 @@ elif prompt.startswith('You are the implementation agent'):
     check = shlex.join([sys.executable, '-c', 'from feature import total; assert total([1, 2]) == 3; print("aggregation test passed")'])
     pathlib.Path('devpipeline-tests.json').write_text(json.dumps({'command': check}))
     result = {'result': 'GOAL_REACHED', 'completed': ['集計を実装'], 'remaining': [], 'problems': [], 'recommended_next_action': 'review'}
+elif prompt.startswith('Create a concise Japanese summary'):
+    result = {'recommendation': 'APPROVE', 'decision_reason': '確認済みのため承認できます',
+              'affected_scope': '今回の集計機能', 'required_action': '承認してください', 'items': []}
 else:
     result = {'result': 'PASS', 'findings': []}
 print(json.dumps(result))
@@ -85,6 +88,8 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual('PASS', detail['evidence'][0]['verification']['overall'])
         self.assertIn('aggregation test passed', detail['evidence'][0]['verification_log'])
         self.assertEqual(1, detail['evidence'][0]['review']['run_id'])
+        self.assertEqual('SUCCESS', detail['evidence'][0]['review_summary']['status'])
+        self.assertEqual('APPROVE', detail['evidence'][0]['review_summary']['recommendation'])
         self.assertFalse((Path(detail['config']['repository']) / 'should-not-exist').exists())
         self.assertTrue((Path(detail['config']['repository']) / '.git').exists())
         old = detail['revision']
@@ -167,6 +172,12 @@ class WebServiceTests(unittest.TestCase):
             self.assertEqual(200,code)
             self.assertIn('テスト'.encode(), body)
             self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
+            code, body, _ = request('/app.js')
+            self.assertEqual(200, code)
+            self.assertIn('業務向け要約'.encode(), body)
+            self.assertIn('技術的な詳細'.encode(), body)
+            self.assertLess(body.index('businessReviewSummary'.encode()),
+                            body.index('technicalFindings(result,!summary'.encode()))
             self.assertEqual(404, request('/work/REV/repo/feature.py')[0])
             self.assertEqual(400, request('/api/initiatives/..%2F..')[0])
             token = json.loads(request('/api/config')[1])['csrf_token']

@@ -1,0 +1,22 @@
+Create a concise Japanese summary of a completed software review for a business owner.
+This is a separate reporting step. Do not inspect or modify the repository.
+
+Issue goal: $goal
+Requirements: $requirements
+Phase goal: $phase_goal
+Acceptance criteria: $acceptance_criteria
+Review result: $review_result
+Numbered technical findings: $findings
+
+Explain only what the business owner needs to decide. Avoid technical terminology and
+implementation details. When a technical concept is essential, restate it in terms of
+the user-visible operation, screen, or data affected. Do not add risks that are not in
+the findings. Every finding id must appear in at least one item's finding_ids so the
+reader can trace the summary back to the original finding.
+
+Output exactly one JSON object and nothing after it. Schema:
+{"recommendation":"APPROVE"|"REQUEST_CHANGES","decision_reason":"...","affected_scope":"...","required_action":"...","items":[{"finding_ids":[1],"problem":"...","business_impact":"...","affected_scope":"...","required_action":"..."}]}
+
+When Review result is PASS, use APPROVE and an empty items array. Otherwise use
+REQUEST_CHANGES. Keep decision_reason, affected_scope, and required_action meaningful
+even when items is empty. Use valid JSON string escaping.

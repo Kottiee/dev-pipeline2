@@ -86,9 +86,10 @@ def read_issue(work_dir: Path, project_id: str, issue_id: str,
     result.update(evidence=[], checkpoint="")
     for phase in phases:
         evidence = {"phase_id": phase["id"], "verification": None, "review": None,
-                    "verification_log": ""}
+                    "review_summary": None, "verification_log": ""}
         for key, suffix in (("verification", "verification"),
-                            ("review", "adversarial-review")):
+                            ("review", "adversarial-review"),
+                            ("review_summary", "review-summary")):
             try:
                 evidence[key] = store.read_json(f"evidence/{phase['id']}-{suffix}.json")
             except FileNotFoundError:
@@ -181,9 +182,10 @@ def read_pipeline(work_dir: Path, target_id: str,
     result.update(evidence=[], checkpoint="")
     for phase in phases:
         evidence = {"phase_id": phase["id"], "verification": None, "review": None,
-                    "verification_log": ""}
+                    "review_summary": None, "verification_log": ""}
         for key, suffix in (("verification", "verification"),
-                            ("review", "adversarial-review")):
+                            ("review", "adversarial-review"),
+                            ("review_summary", "review-summary")):
             try:
                 evidence[key] = store.read_json(f"evidence/{phase['id']}-{suffix}.json")
             except FileNotFoundError:
