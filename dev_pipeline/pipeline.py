@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents.base import Agent, AgentError
+from .allocation import collect_agent_allocation
 from .models import Initiative, Phase, PipelineState, RunOutcome, now_iso
 from .prompts import render_prompt
 from .store import WorkStore
@@ -272,23 +273,30 @@ class Pipeline:
     def _record_usage(self, stage: str, phase_id: str, run_number: int,
                       output: str) -> None:
         usage = extract_token_usage(output, self._token_usage_format())
-        if usage is None:
+        allocation = collect_agent_allocation(self.agent)
+        if usage is None and allocation is None:
             return
-        self.store.record_usage_event({
+        event = {
             "stage": stage, "phase": phase_id, "run": run_number,
-            "usage": usage, "recorded_at": now_iso(),
-        })
+            "recorded_at": now_iso(),
+        }
+        if usage is not None:
+            event["usage"] = usage
+        if allocation is not None:
+            event["allocation_usage"] = allocation
+        self.store.record_usage_event(event)
 
     def _record_failure_usage(self, stage: str, phase_id: str, run_number: int,
                               error: AgentError) -> None:
-        if error.log_path is None:
-            return
-        prefix = error.log_path.name.rsplit("-", 1)[0]
         outputs = []
-        paths = sorted(
-            error.log_path.parent.glob(f"{prefix}-*.json"),
-            key=lambda path: int(path.name.rsplit("-", 1)[1].rsplit(".", 1)[0]),
-        )
+        if error.log_path is None:
+            paths = []
+        else:
+            prefix = error.log_path.name.rsplit("-", 1)[0]
+            paths = sorted(
+                error.log_path.parent.glob(f"{prefix}-*.json"),
+                key=lambda path: int(path.name.rsplit("-", 1)[1].rsplit(".", 1)[0]),
+            )
         for path in paths:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -297,8 +305,7 @@ class Pipeline:
             stdout = payload.get("stdout") if isinstance(payload, dict) else None
             if isinstance(stdout, str) and stdout:
                 outputs.append(stdout)
-        if outputs:
-            self._record_usage(stage, phase_id, run_number, "\n".join(outputs))
+        self._record_usage(stage, phase_id, run_number, "\n".join(outputs))
 
     @staticmethod
     def _checkpoint(phase: Phase, outcome: RunOutcome) -> str:

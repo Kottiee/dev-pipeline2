@@ -124,16 +124,6 @@ dev-pipeline-web \
 
 ### 常時利用できる状態にする
 
-サービスを常時利用する場合は、同梱の `examples/dev-pipeline-web.plist` を実環境に合わせて変更し、macOSのlaunchdへ登録します。設定には、プロジェクト、Python、作業保存先、公開URL、許可利用者、ログの絶対パスを指定します。
+サービスをmacOSへのログイン時に起動し、終了時に再起動する場合は、[launchd常時起動ガイド](launchd.md)に従って同梱の `examples/dev-pipeline-web.plist` を設定・登録します。
 
-```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.dev-pipeline.web.plist
-```
-
-設定変更や登録解除：
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.dev-pipeline.web.plist
-```
-
-PCがスリープ、ログアウト、電源切れ、ネットワーク切断になると利用できません。AIサービスの認証切れも自動復旧しないため、管理者が定期的に確認します。
+PCがスリープ、ログアウト、電源切れ、ネットワーク切断になると利用できません。TailscaleやAIサービスの認証切れもplistだけでは復旧しません。

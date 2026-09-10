@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .agents import AgentError, create_agent
 from .agents.base import Agent
+from .allocation import collect_agent_allocation, format_allocation_usage
 from .models import now_iso
 from .pipeline import Pipeline, TransitionError
 from .prompts import render_prompt
@@ -136,6 +137,7 @@ def _show(store: WorkStore) -> str:
         lines.append("Phases:")
         lines.extend(f"  {phase['id']}: {phase['status']}" for phase in phases)
     lines.append(format_token_usage(report["usage"]))
+    lines.append(format_allocation_usage(report["allocation_usage"]))
     return "\n".join(lines)
 
 
@@ -166,11 +168,17 @@ def _execute(args: argparse.Namespace) -> int:
             Pipeline.initialize(store, goal, requirements, constraints, phases,
                                 checks=_checks(args.check))
             usage = extract_token_usage(planner_output, agent.token_usage_format)
-            if usage is not None:
-                store.record_usage_event({
+            allocation = collect_agent_allocation(agent)
+            if usage is not None or allocation is not None:
+                event = {
                     "stage": "planner", "phase": None, "run": None,
-                    "usage": usage, "recorded_at": now_iso(),
-                })
+                    "recorded_at": now_iso(),
+                }
+                if usage is not None:
+                    event["usage"] = usage
+                if allocation is not None:
+                    event["allocation_usage"] = allocation
+                store.record_usage_event(event)
             if args.plan_only:
                 print(json.dumps(store.load_state().as_dict(), ensure_ascii=False, indent=2))
                 return 0

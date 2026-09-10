@@ -64,6 +64,7 @@ def read_pipeline(work_dir: Path, initiative_id: str,
         "revision": state.revision(),
         "phases": phases,
         "usage": store.load_token_usage(),
+        "allocation_usage": store.load_allocation_usage(),
         "actions": available_actions(state.state),
     }
     if not include_evidence:

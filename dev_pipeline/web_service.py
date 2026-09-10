@@ -350,7 +350,7 @@ class WebService:
                 result = {"initiative": {"id": initiative_id, "goal": config.get("request", "初期化中")},
                           "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
                           "revision": None, "phases": [], "usage": {},
-                          "actions": available_actions("PLANNING")}
+                          "allocation_usage": {}, "actions": available_actions("PLANNING")}
                 if include_evidence:
                     result.update(evidence=[], checkpoint="")
             job = self._latest(initiative_id)

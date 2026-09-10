@@ -269,7 +269,8 @@ class UsagePipelineTests(unittest.TestCase):
                 "phases": PHASES}
         stdout = codex_output(codex_line(input_tokens=50, output_tokens=25))
         with patch("dev_pipeline.agents.codex.CodexAgent.execute",
-                   return_value=AgentResult(plan, stdout, "")) as execute:
+                   return_value=AgentResult(plan, stdout, "")) as execute, \
+             patch("dev_pipeline.cli.collect_agent_allocation", return_value=None):
             store = WorkStore(self.root / "work", "PLAN-001")
             with patch("builtins.print"):
                 result = main(["--work-dir", str(self.root / "work"), "--repo", str(self.root),
