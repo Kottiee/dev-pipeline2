@@ -9,7 +9,7 @@ from typing import Any
 
 PIPELINE_STATES = {
     "PLANNING", "PHASE_RUNNING", "PHASE_VERIFYING", "PHASE_REVIEWING",
-    "AWAITING_HUMAN_CHECK", "PHASE_FIXING", "COMPLETED", "FAILED",
+    "AWAITING_HUMAN_CHECK", "PHASE_FIXING", "RESOLVED", "COMPLETED", "FAILED",
 }
 PHASE_STATUSES = {"pending", "running", "awaiting_human_check", "accepted"}
 
@@ -50,44 +50,81 @@ class Phase:
 
 
 @dataclass
-class Initiative:
+class Project:
     id: str
-    goal: str
-    requirements: list[str]
-    constraints: list[str]
-    phase_order: list[str]
+    repo: str | None = None
+    agent: str = "codex"
+    agent_command: str | None = None
     checks: list[tuple[str, str]] = field(default_factory=list)
+    token_usage_format: str | None = None
+    created_at: str = field(default_factory=now_iso)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "Initiative":
+    def from_dict(cls, value: dict[str, Any]) -> "Project":
         data = dict(value)
         data["checks"] = _parse_checks(data.get("checks"))
-        initiative = cls(**data)
-        if not initiative.goal or not initiative.phase_order:
-            raise ValueError("initiative goal and at least one phase are required")
-        return initiative
+        return cls(**data)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
+class Issue:
+    id: str
+    goal: str
+    requirements: list[str]
+    constraints: list[str]
+    phase_order: list[str]
+    checks: list[tuple[str, str]] = field(default_factory=list)
+    created_at: str = field(default_factory=now_iso)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "Issue":
+        data = dict(value)
+        data["checks"] = _parse_checks(data.get("checks"))
+        if "created_at" not in data:
+            data["created_at"] = now_iso()
+        issue = cls(**data)
+        if not issue.goal or not issue.phase_order:
+            raise ValueError("issue goal and at least one phase are required")
+        return issue
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+Initiative = Issue
+
+
+@dataclass
 class PipelineState:
-    initiative_id: str
+    issue_id: str
     state: str
     current_phase: str | None
     current_run: int = 0
     last_updated_at: str = field(default_factory=now_iso)
 
+    @property
+    def initiative_id(self) -> str:
+        return self.issue_id
+
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "PipelineState":
-        state = cls(**value)
+        data = dict(value)
+        if "issue_id" not in data and "initiative_id" in data:
+            data["issue_id"] = data.pop("initiative_id")
+        else:
+            data.pop("initiative_id", None)
+        state = cls(**data)
         if state.state not in PIPELINE_STATES:
             raise ValueError(f"invalid pipeline state: {state.state}")
         return state
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["initiative_id"] = self.issue_id
+        return d
 
     def revision(self) -> str:
         """Identify exactly the state a human inspected before making a decision."""

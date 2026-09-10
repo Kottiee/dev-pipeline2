@@ -35,29 +35,58 @@ dev-pipeline [--work-dir DIR] [--repo DIR] [--agent NAME]
 
 相対パスはコマンドを起動したディレクトリ基準です。再開時の取り違えを防ぐには、`--work-dir` と外部の `--repo` を絶対パスで固定してください。
 
-## 2. 新しい案件を開始する
+## 2. Project + Issue 運用 (推奨)
 
-### 自然言語からフェーズを計画する
+パイプラインはリポジトリと検証ルールを共有する **Project** と、その上で順次進行する **Issue** の2層モデルを採用しています。
 
-`--repo` を省略すると、`init` は `work/<案件ID>/repo/` を作成します。ただしGit初期化はしないため、先に準備することを推奨します。
+### プロジェクトの管理 (`dev-pipeline project`)
 
 ```bash
-mkdir -p work/INIT-001/repo
-git init work/INIT-001/repo
+# プロジェクトの作成 (新規Gitリポジトリ自動初期化)
+dev-pipeline project init my-service --agent codex
 
-dev-pipeline --agent codex init \
-  --id INIT-001 \
-  --request "チームで使える軽量なタスク管理Webアプリを作る" \
-  --requirement "タスクを登録・完了できる" \
-  --requirement "担当者で絞り込める" \
-  --constraint "SQLiteで動作すること"
+# 既存リポジトリを指定して作成
+dev-pipeline project init existing-app --repo /path/to/repo --agent antigravity
+
+# 共通検証チェックをプロジェクトに事前登録
+dev-pipeline project init backend-api --check 'test=pytest' --check 'lint=ruff check .'
+
+# 一覧と詳細
+dev-pipeline project list
+dev-pipeline project show my-service
 ```
 
-`--requirement` と `--constraint` は複数指定できます。`init` は次を連続して実行し、`AWAITING_HUMAN_CHECK` で停止します。
+### Issueの作成と実行 (`dev-pipeline issue`)
 
-1. Agentによるフェーズ計画
-2. 最初のフェーズの実装Run
-3. 機械検証
+```bash
+# Issueの作成と初期Run
+dev-pipeline issue create my-service \
+  --id 0001-login \
+  --request "ログインAPIとセッション管理を実装する" \
+  --requirement "POST /login でトークンを発行"
+
+# 状態確認
+dev-pipeline issue status my-service 0001-login
+
+# 承認と次のフェーズ実行
+dev-pipeline issue human-check my-service 0001-login ACCEPT
+dev-pipeline issue run my-service 0001-login --until-ready
+
+# 修正指示
+dev-pipeline issue human-check my-service 0001-login FEEDBACK \
+  --feedback "パスワードハッシュ化アルゴリズムをArgon2にしてください"
+dev-pipeline issue run my-service 0001-login --until-ready
+```
+
+最終フェーズを承認するとIssueは `RESOLVED` になります。次のIssue（例: `0002-logout`）を開始すると、過去に解決されたIssueのゴールや受け入れ条件が自動的にプロンプトへ組み込まれます。
+
+---
+
+## 3. レガシー案件運用 (`dev-pipeline init`)
+
+従来の単一案件（Initiative）コマンドも下位互換性のため維持されています。
+
+### 自然言語からフェーズを計画する
 4. AIレビュー
 5. 検証失敗・レビュー指摘がある場合の修正Run
 

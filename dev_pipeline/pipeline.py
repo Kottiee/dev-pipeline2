@@ -7,9 +7,9 @@ from typing import Any
 
 from .agents.base import Agent, AgentError
 from .allocation import collect_agent_allocation
-from .models import Initiative, Phase, PipelineState, RunOutcome, now_iso
+from .models import Issue, Phase, PipelineState, RunOutcome, now_iso
 from .prompts import render_prompt
-from .store import WorkStore
+from .store import IssueStore, WorkStore
 from .usage import DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage
 
 
@@ -23,23 +23,24 @@ TEST_MANIFEST_FILE = "devpipeline-tests.json"
 
 
 class Pipeline:
-    def __init__(self, store: WorkStore, repository: Path, agent: Agent):
+    def __init__(self, store: IssueStore, repository: Path, agent: Agent):
         self.store = store
         self.repository = repository.resolve()
         self.agent = agent
 
     @staticmethod
     def initialize(
-        store: WorkStore, goal: str, requirements: list[str], constraints: list[str],
+        store: IssueStore, goal: str, requirements: list[str], constraints: list[str],
         phase_specs: list[dict[str, Any]],
         checks: list[tuple[str, str]] | None = None,
     ) -> None:
         phases = [Phase(id=f"phase-{index:02d}", sequence=index, **spec)
                   for index, spec in enumerate(phase_specs, 1)]
-        initiative = Initiative(store.initiative_id, goal, requirements, constraints,
-                                [phase.id for phase in phases],
-                                checks=[tuple(check) for check in (checks or [])])
-        store.create(initiative, phases)
+        issue_id = getattr(store, "issue_id", getattr(store, "initiative_id", ""))
+        issue = Issue(issue_id, goal, requirements, constraints,
+                      [phase.id for phase in phases],
+                      checks=[tuple(check) for check in (checks or [])])
+        store.create(issue, phases)
 
     def _manifest_command(self) -> str | None:
         path = self.repository / TEST_MANIFEST_FILE
@@ -51,12 +52,20 @@ class Pipeline:
         return command.strip() if isinstance(command, str) and command.strip() else None
 
     def _resolve_checks(self, checks: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """--check overrides registered checks; both fall back to the test manifest."""
+        """--check overrides registered checks; both fall back to project checks and test manifest."""
         if checks:
             return [tuple(check) for check in checks]
-        stored = self.store.load_initiative().checks
+        stored = self.store.load_issue().checks
         if stored:
             return [tuple(check) for check in stored]
+        project_store = getattr(self.store, "project_store", None)
+        if project_store and project_store.exists():
+            try:
+                project = project_store.load_project()
+                if project.checks:
+                    return [tuple(check) for check in project.checks]
+            except Exception:
+                pass
         command = self._manifest_command()
         return [("test", command)] if command else []
 
@@ -67,9 +76,9 @@ class Pipeline:
         prompt_checks = self._resolve_checks(checks) if verify else []
         state.current_run += 1
         self.store.save_state(state)
-        initiative = self.store.load_initiative()
+        issue = self.store.load_issue()
         phase = self.store.load_phase(state.current_phase)
-        prompt = self._run_prompt(initiative, phase, state, prompt_checks)
+        prompt = self._run_prompt(issue, phase, state, prompt_checks)
         try:
             result = self.agent.execute(prompt, self.repository)
         except AgentError as error:
@@ -156,9 +165,9 @@ class Pipeline:
         if state.state != "PHASE_REVIEWING" or not state.current_phase:
             raise TransitionError("review requires successful verification")
         phase = self.store.load_phase(state.current_phase)
-        initiative = self.store.load_initiative()
+        issue = self.store.load_issue()
         try:
-            result = self.agent.execute(self._review_prompt(initiative, phase), self.repository)
+            result = self.agent.execute(self._review_prompt(issue, phase), self.repository)
         except AgentError as error:
             self._record_failure_usage("review", phase.id, state.current_run, error)
             raise
@@ -209,12 +218,12 @@ class Pipeline:
             return "PHASE_FIXING"
         phase.status = "accepted"
         self.store.save_phase(phase)
-        initiative = self.store.load_initiative()
-        index = initiative.phase_order.index(phase.id)
-        if index + 1 == len(initiative.phase_order):
-            state.state, state.current_phase = "COMPLETED", None
+        issue = self.store.load_issue()
+        index = issue.phase_order.index(phase.id)
+        if index + 1 == len(issue.phase_order):
+            state.state, state.current_phase = "RESOLVED", None
         else:
-            next_phase = self.store.load_phase(initiative.phase_order[index + 1])
+            next_phase = self.store.load_phase(issue.phase_order[index + 1])
             next_phase.status = "running"
             self.store.save_phase(next_phase)
             state.state, state.current_phase, state.current_run = "PHASE_RUNNING", next_phase.id, 0
@@ -230,18 +239,48 @@ class Pipeline:
         return "\n\n".join(f"{path.name}:\n{path.read_text(encoding='utf-8')}"
                             for path in paths if path.exists()) or "none"
 
-    def _run_prompt(self, initiative: Initiative, phase: Phase, state: PipelineState,
+    def _resolved_issues_context(self) -> str:
+        project_store = getattr(self.store, "project_store", None)
+        if not project_store:
+            return "none"
+        resolved = []
+        current_id = getattr(self.store, "issue_id", "")
+        for other_id in project_store.list_issue_ids():
+            if other_id == current_id:
+                continue
+            try:
+                istore = project_store.issue_store(other_id)
+                st = istore.load_state()
+                if st.state in {"RESOLVED", "COMPLETED"}:
+                    iss = istore.load_issue()
+                    phases_summary = []
+                    for pid in iss.phase_order:
+                        try:
+                            p = istore.load_phase(pid)
+                            phases_summary.append(f"  * Phase {p.id}: {p.goal} (status: {p.status})")
+                        except Exception:
+                            pass
+                    entry = f"- Issue {other_id}: {iss.goal}"
+                    if phases_summary:
+                        entry += "\n" + "\n".join(phases_summary)
+                    resolved.append(entry)
+            except Exception:
+                continue
+        return "\n".join(resolved) if resolved else "none"
+
+    def _run_prompt(self, issue: Issue, phase: Phase, state: PipelineState,
                     checks: list[tuple[str, str]]) -> str:
         feedback_files = sorted((self.store.path / "feedback").glob(f"{phase.id}-*.json"))
         feedback = feedback_files[-1].read_text(encoding="utf-8") if feedback_files else "none"
         accepted = [self.store.load_phase(phase_id).as_dict()
-                    for phase_id in initiative.phase_order[:phase.sequence - 1]]
+                    for phase_id in issue.phase_order[:phase.sequence - 1]]
         return render_prompt(
             "run",
             repository=str(self.repository),
-            goal=initiative.goal,
-            requirements=str(initiative.requirements),
-            constraints=str(initiative.constraints),
+            goal=issue.goal,
+            requirements=str(issue.requirements),
+            constraints=str(issue.constraints),
+            resolved_issues=self._resolved_issues_context(),
             phase_goal=phase.goal,
             scope=str(phase.scope),
             acceptance_criteria=str(phase.acceptance_criteria),
@@ -253,13 +292,14 @@ class Pipeline:
             manifest_file=TEST_MANIFEST_FILE,
         )
 
-    def _review_prompt(self, initiative: Initiative, phase: Phase) -> str:
+    def _review_prompt(self, issue: Issue, phase: Phase) -> str:
         return render_prompt(
             "review",
             repository=str(self.repository),
-            goal=initiative.goal,
-            requirements=str(initiative.requirements),
-            constraints=str(initiative.constraints),
+            goal=issue.goal,
+            requirements=str(issue.requirements),
+            constraints=str(issue.constraints),
+            resolved_issues=self._resolved_issues_context(),
             phase_goal=phase.goal,
             scope=str(phase.scope),
             acceptance_criteria=str(phase.acceptance_criteria),

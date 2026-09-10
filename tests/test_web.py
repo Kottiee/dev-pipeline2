@@ -104,7 +104,7 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual('accepted', detail['phases'][0]['status'])
         job = self.service.act('TEST', 'human-check', {'request_id': 'accept-2',
             'revision': detail['revision'], 'result': 'ACCEPT'})
-        self.assertEqual('COMPLETED', self.wait_job(job)['state']['state'])
+        self.assertEqual('RESOLVED', self.wait_job(job)['state']['state'])
 
     def test_stop_planning_and_resume_without_duplicate_execution(self):
         repository = self.root / 'repo'; repository.mkdir()

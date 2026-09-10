@@ -198,7 +198,7 @@ class PipelineTests(unittest.TestCase):
         state.current_phase = "phase-02"
         self.store.save_state(state)
         pipeline = Pipeline(self.store, self.root, FakeAgent([]))
-        self.assertEqual("COMPLETED", pipeline.human_check("ACCEPT"))
+        self.assertEqual("RESOLVED", pipeline.human_check("ACCEPT"))
         self.assertIsNone(self.store.load_state().current_phase)
         self.assertEqual("accepted", self.store.load_phase("phase-02").status)
 

@@ -18,10 +18,17 @@ from .reporting import (
     available_actions,
     default_repository,
     initiative_exists,
+    issue_exists,
     list_initiative_ids,
+    list_issue_ids,
+    list_project_ids,
+    project_exists,
+    read_issue,
     read_pipeline,
+    read_project,
 )
-from .store import JsonStore
+from .store import JsonStore, ProjectStore
+from .models import Project
 
 AGENTS = ("codex", "opencode", "antigravity")
 ACTIVE = {"queued", "running", "stopping"}
@@ -264,7 +271,20 @@ class WebService:
             with log.open("w", encoding="utf-8") as output:
                 base = self._base_command(job, config)
                 action = job["action"]
-                if action == "init":
+                project_id = job.get("project_id")
+                issue_id = job.get("issue_id")
+                if project_id and issue_id:
+                    if action == "init":
+                        command = base + ["issue", "create", project_id, "--id", issue_id, "--request", config["request"]]
+                        for key, option in (("requirements", "--requirement"), ("constraints", "--constraint")):
+                            for line in config.get(key, "").splitlines():
+                                if line.strip():
+                                    command += [option, line.strip()]
+                    elif action == "human-check":
+                        command = base + ["issue", "human-check", project_id, issue_id] + extra
+                    else:
+                        command = base + ["issue", "run", project_id, issue_id, "--until-ready"]
+                elif action == "init":
                     if config.get("create_repository"):
                         repo = Path(config["repository"])
                         repo.mkdir(parents=True, exist_ok=True)
@@ -283,9 +303,14 @@ class WebService:
                     command = base + ["run", initiative_id, "--until-ready"]
                 code = self._process(job_id, command, output)
                 if code == 0 and action == "human-check" and not self.cancels[job_id].is_set():
-                    pipeline = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
-                    if pipeline["actions"]["run"]:
-                        code = self._process(job_id, base + ["run", initiative_id, "--until-ready"], output)
+                    if project_id and issue_id:
+                        p_info = read_issue(self.work_dir, project_id, issue_id, include_evidence=False)
+                        if p_info["actions"]["run"]:
+                            code = self._process(job_id, base + ["issue", "run", project_id, issue_id, "--until-ready"], output)
+                    else:
+                        pipeline = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
+                        if pipeline["actions"]["run"]:
+                            code = self._process(job_id, base + ["run", initiative_id, "--until-ready"], output)
         except Exception as exc:
             error = str(exc)
         with self.lock:
@@ -377,3 +402,214 @@ class WebService:
                                    "actions": {"run": False, "human_check": False, "completed": False},
                                    "job": None, "phases": [], "error": str(error)})
             return result
+
+    def list_projects(self):
+        with self.lock:
+            ids = set(list_project_ids(self.work_dir))
+            for cfg_id, cfg in self.configs.items():
+                if cfg.get("is_project") or ProjectStore(self.work_dir, cfg_id).exists():
+                    ids.add(cfg_id)
+            projects = []
+            for pid in sorted(ids):
+                p_store = ProjectStore(self.work_dir, pid)
+                if p_store.exists():
+                    try:
+                        proj = p_store.load_project()
+                        repo = str(p_store.repository_path())
+                        agent = proj.agent
+                    except Exception:
+                        repo = str(p_store.repository_path())
+                        agent = self.default_agent
+                else:
+                    repo = str(p_store.repository_path())
+                    agent = self.default_agent
+                issue_ids = p_store.list_issue_ids()
+                active_count = 0
+                waiting_count = 0
+                for i_id in issue_ids:
+                    job = self._latest(f"{pid}/{i_id}") or self._latest(i_id)
+                    if job and job["status"] in ACTIVE:
+                        active_count += 1
+                    try:
+                        det = read_issue(self.work_dir, pid, i_id, include_evidence=False)
+                        if det["actions"]["human_check"]:
+                            waiting_count += 1
+                    except Exception:
+                        pass
+                projects.append({
+                    "id": pid,
+                    "repository": repo,
+                    "agent": agent,
+                    "issues_count": len(issue_ids),
+                    "active_issues_count": active_count,
+                    "waiting_issues_count": waiting_count,
+                })
+            return projects
+
+    def create_project(self, data):
+        with self.lock:
+            project_id = text_field(data, "id", 128, required=True)
+            p_store = ProjectStore(self.work_dir, project_id)
+            if p_store.exists():
+                raise Conflict("このプロジェクトIDは既に使われています")
+            agent = text_field(data, "agent", 30) or self.default_agent
+            if agent not in AGENTS:
+                raise ValueError("対応していないエージェントです")
+            repository = text_field(data, "repository", 4096)
+            if repository:
+                repo = Path(repository).expanduser().resolve()
+                if not repo.is_dir():
+                    raise ValueError("指定されたリポジトリのディレクトリが存在しません")
+                repo_path = str(repo)
+            else:
+                default_repo = p_store.path / "repo"
+                default_repo.mkdir(parents=True, exist_ok=True)
+                if not (default_repo / ".git").exists():
+                    subprocess.run(["git", "init", str(default_repo)], check=False)
+                repo_path = str(default_repo)
+            project = Project(id=project_id, repo=repo_path, agent=agent)
+            p_store.create(project)
+            self.configs[project_id] = {"agent": agent, "repository": repo_path, "is_project": True}
+            self.store.write_json("settings.json", self.configs)
+            return project.as_dict()
+
+    def project_detail(self, project_id):
+        with self.lock:
+            p_store = ProjectStore(self.work_dir, project_id)
+            if not p_store.exists():
+                raise FileNotFoundError("プロジェクトが見つかりません")
+            proj = p_store.load_project()
+            issues = self.list_issues(project_id)
+            return {
+                "project": proj.as_dict(),
+                "repository": str(p_store.repository_path()),
+                "issues": issues,
+            }
+
+    def list_issues(self, project_id):
+        with self.lock:
+            p_store = ProjectStore(self.work_dir, project_id)
+            issue_ids = p_store.list_issue_ids()
+            results = []
+            for i_id in issue_ids:
+                try:
+                    detail = self.issue_detail(project_id, i_id, include_evidence=False)
+                    results.append({k: detail[k] for k in
+                                    ("issue", "state", "actions", "job", "phases", "project_id")})
+                except Exception as error:
+                    results.append({
+                        "issue": {"id": i_id, "goal": "状態の読み取りエラー"},
+                        "state": {"state": "FAILED"},
+                        "actions": {"run": False, "human_check": False, "completed": False},
+                        "job": None, "phases": [], "project_id": project_id, "error": str(error)
+                    })
+            return results
+
+    def issue_detail(self, project_id, issue_id, include_evidence=True):
+        with self.lock:
+            p_store = ProjectStore(self.work_dir, project_id)
+            resolved_id = p_store.resolve_issue_id(issue_id)
+            try:
+                result = read_issue(self.work_dir, project_id, resolved_id, include_evidence)
+            except FileNotFoundError:
+                key = f"{project_id}/{issue_id}"
+                config = self.configs.get(key, {})
+                result = {
+                    "project_id": project_id,
+                    "issue": {"id": issue_id, "goal": config.get("request", "初期化中")},
+                    "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
+                    "revision": None, "phases": [], "usage": {},
+                    "allocation_usage": {}, "actions": available_actions("PLANNING")
+                }
+                if include_evidence:
+                    result.update(evidence=[], checkpoint="")
+            job = self._latest(f"{project_id}/{resolved_id}") or self._latest(resolved_id)
+            if not include_evidence:
+                return {**result, "job": job}
+            p_config = self._config(project_id)
+            result.update(job=job, config=p_config,
+                          job_log=self._job_log(self.directory / "job-logs" / f"{job['id']}.log") if job else "")
+            return result
+
+    def create_issue(self, project_id, data):
+        with self.lock:
+            request_id = text_field(data, "request_id", 100, True)
+            p_store = ProjectStore(self.work_dir, project_id)
+            if not p_store.exists():
+                raise FileNotFoundError("プロジェクトが見つかりません")
+            issue_id = text_field(data, "id", 128) or p_store.next_issue_id(text_field(data, "request", 100))
+            full_key = f"{project_id}/{issue_id}"
+            for job in self.jobs.values():
+                if job.get("project_id") == project_id and job.get("issue_id") == issue_id and job["request_id"] == request_id:
+                    return job.copy()
+            p_config = self._config(project_id)
+            repo = Path(p_config["repository"])
+            config = {
+                "request": text_field(data, "request", required=True),
+                "requirements": text_field(data, "requirements"),
+                "constraints": text_field(data, "constraints"),
+                "agent": p_config["agent"],
+                "repository": str(repo),
+                "project_id": project_id,
+                "issue_id": issue_id,
+            }
+            self._idle(full_key, str(repo))
+            return self._enqueue_issue(project_id, issue_id, "init", request_id, config, [])
+
+    def act_issue(self, project_id, issue_id, action, data):
+        with self.lock:
+            request_id = text_field(data, "request_id", 100, True)
+            full_key = f"{project_id}/{issue_id}"
+            for job in self.jobs.values():
+                if job.get("project_id") == project_id and job.get("issue_id") == issue_id and job["request_id"] == request_id:
+                    return job.copy()
+            detail = self.issue_detail(project_id, issue_id)
+            p_config = self._config(project_id)
+            self._idle(full_key, p_config["repository"])
+            extra = []
+            if action == "human-check":
+                revision = text_field(data, "revision", 64, True)
+                if not detail["actions"]["human_check"] or revision != detail["revision"]:
+                    raise Conflict("確認後に状態が更新されています。最新の結果を確認してください")
+                result = text_field(data, "result", 16, True)
+                if result not in ("ACCEPT", "FEEDBACK"):
+                    raise ValueError("承認または差し戻しを選んでください")
+                extra = [result, "--expected-revision", revision]
+                if result == "FEEDBACK":
+                    extra += ["--feedback", text_field(data, "feedback", required=True)]
+            elif action == "run":
+                if not detail["actions"]["run"]:
+                    raise Conflict("この状態では実行できません。最新の状態を確認してください")
+            elif action == "stop":
+                return self.stop_issue(project_id, issue_id)
+            else:
+                raise ValueError("不明な操作です")
+            config = {
+                "agent": p_config["agent"],
+                "repository": p_config["repository"],
+                "project_id": project_id,
+                "issue_id": issue_id,
+            }
+            return self._enqueue_issue(project_id, issue_id, action, request_id, config, extra)
+
+    def stop_issue(self, project_id, issue_id):
+        with self.lock:
+            job = self._latest(f"{project_id}/{issue_id}")
+            if not job:
+                raise Conflict("現在実行中のジョブはありません")
+            return self._stop(self.jobs[job["id"]])
+
+    def _enqueue_issue(self, project_id, issue_id, action, request_id, config, extra):
+        job_id = uuid.uuid4().hex
+        job = {"id": job_id, "initiative_id": f"{project_id}/{issue_id}",
+               "project_id": project_id, "issue_id": issue_id, "action": action,
+               "request_id": request_id, "status": "queued", "created_at": now_iso(),
+               "repository": config["repository"], "error": None, "returncode": None}
+        self.jobs[job_id] = job
+        self.cancels[job_id] = threading.Event()
+        self._save_jobs()
+        thread = threading.Thread(target=self._execute, args=(job_id, config.copy(), extra),
+                                  daemon=True, name=f"pipeline-{project_id}-{issue_id}")
+        self.threads[job_id] = thread
+        thread.start()
+        return job.copy()

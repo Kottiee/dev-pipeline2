@@ -1,7 +1,8 @@
-Turn this human request into an actionable initiative and one or more human-reviewable
+Turn this human request into an actionable issue and one or more human-reviewable
 phases. Do not implement anything. Request: $request
 Additional requirements: $requirement
 Constraints: $constraint
+Previously resolved issues in this project: $resolved_issues
 Output exactly one JSON object and nothing after it with this schema:
 {"goal":"...","requirements":["..."],"constraints":["..."],"phases":[{"goal":"...","scope":["..."],"acceptance_criteria":["..."]}]}
 Every phase must be independently runnable and reviewable. Do not create work items.

@@ -77,7 +77,7 @@ class AdapterSelectionTests(unittest.TestCase):
                 check = "test=" + shlex.join([sys.executable, "-c", "print('ok')"])
                 self.assertEqual(0, main(args + ["run", "TEST", "--until-ready", "--check", check]))
                 self.assertEqual(0, main(args + ["human-check", "TEST", "ACCEPT"]))
-            self.assertEqual("COMPLETED", WorkStore(repo / "work", "TEST").load_state().state)
+            self.assertEqual("RESOLVED", WorkStore(repo / "work", "TEST").load_state().state)
         self.assertEqual(3, len(calls))
         self.assertTrue(all(repository == repo for _, repository in calls))
 
