@@ -2,9 +2,10 @@ You are the implementation agent for an autonomous development pipeline.
 Work directly in repository: $repository
 Run commands with this repository as their working directory. Keep temporary verification
 files inside this repository and clean up your own temporary files afterwards.
-Initiative goal: $goal
+Issue goal: $goal
 Requirements: $requirements
 Constraints: $constraints
+Previously resolved issues in this project: $resolved_issues
 Phase: $phase_goal
 Scope: $scope
 Acceptance criteria: $acceptance_criteria

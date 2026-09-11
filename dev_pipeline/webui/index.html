@@ -20,24 +20,43 @@
   </header>
   <main class="workspace">
     <aside id="list-pane" class="list-pane">
-      <div class="list-heading"><div><p class="eyebrow">WORKSPACE</p><h1>案件</h1></div><button id="new-open" class="button primary">＋ 新規依頼</button></div>
+      <div class="project-selector-box">
+        <div class="project-selector-header">
+          <span class="eyebrow">PROJECT</span>
+          <button id="new-project-open" class="button quiet small">＋ 新規PJ</button>
+        </div>
+        <select id="project-select" class="project-select" aria-label="プロジェクト選択">
+          <option value="">プロジェクトを読み込み中…</option>
+        </select>
+      </div>
+      <div class="list-heading"><div><p class="eyebrow">WORKSPACE</p><h1>Issue</h1></div><button id="new-open" class="button primary">＋ 新規Issue</button></div>
       <div id="summary" class="summary"></div>
-      <nav id="filters" class="filters" aria-label="案件の絞り込み">
+      <nav id="filters" class="filters" aria-label="Issueの絞り込み">
         <button data-filter="all" class="selected">すべて</button><button data-filter="waiting">承認待ち</button><button data-filter="active">実行中</button><button data-filter="done">完了</button>
       </nav>
-      <div id="initiative-list" class="initiative-list" aria-live="polite"><p class="muted">案件を読み込んでいます…</p></div>
+      <div id="issue-list" class="issue-list" aria-live="polite"><p class="muted">Issueを読み込んでいます…</p></div>
     </aside>
-    <section id="detail-pane" class="detail-pane" aria-label="案件の詳細"><div class="empty-detail"><span class="empty-mark">↗</span><h2>案件を選んで確認</h2><p>進行状況、テスト結果、レビュー結果を<br>ここで確認できます。</p></div></section>
+    <section id="detail-pane" class="detail-pane" aria-label="Issueの詳細"><div class="empty-detail"><span class="empty-mark">↗</span><h2>Issueを選んで確認</h2><p>進行状況、テスト結果、レビュー結果を<br>ここで確認できます。</p></div></section>
   </main>
   <div id="toast" class="toast" role="status" hidden></div>
 
+  <dialog id="new-project-dialog">
+    <form id="new-project-form">
+      <div class="dialog-heading"><div><p class="eyebrow">NEW PROJECT</p><h2>新しいプロジェクト</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div>
+      <label>プロジェクトID <span class="optional">英数字・ハイフン</span><input name="id" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="my-app"></label>
+      <label>リポジトリパス <span class="optional">空欄なら新規Gitリポジトリを作成</span><input name="repository" maxlength="4096" placeholder="/path/to/repo または空欄"></label>
+      <label>標準エージェント<select name="agent" class="agent-options"></select></label>
+      <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-close>キャンセル</button><button type="submit" class="button primary">プロジェクト作成</button></div>
+    </form>
+  </dialog>
+
   <dialog id="new-dialog">
     <form id="new-form">
-      <div class="dialog-heading"><div><p class="eyebrow">NEW INITIATIVE</p><h2>新しい依頼</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div>
+      <div class="dialog-heading"><div><p class="eyebrow">NEW ISSUE</p><h2>新しいIssue</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div>
       <label>何を作りますか？<textarea name="request" rows="5" required maxlength="20000" placeholder="目的、実現したいことを入力してください"></textarea></label>
       <label>要件 <span class="optional">任意・1行に1つ</span><textarea name="requirements" rows="2" maxlength="20000" placeholder="必要な機能や満たしたい条件"></textarea></label>
       <label>制約 <span class="optional">任意・1行に1つ</span><textarea name="constraints" rows="2" maxlength="20000" placeholder="技術、データ保存先、変更できない範囲など"></textarea></label>
-      <details><summary>実行設定</summary><label>エージェント<select name="agent" class="agent-options"></select></label><label>案件ID <span class="optional">空欄なら自動発行</span><input name="id" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="INIT-001"></label><label>既存リポジトリ <span class="optional">ローカルPC上のパス</span><input name="repository" maxlength="4096" placeholder="空欄なら専用のGitリポジトリを作成"></label></details>
+      <details><summary>実行設定</summary><label>エージェント<select name="agent" class="agent-options"></select></label><label>Issue ID <span class="optional">空欄なら自動発行 (例: ISS-001)</span><input name="id" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="ISS-001"></label></details>
       <p class="hint">計画の作成後、そのまま実装・検証・レビューを進めます。承認が必要になった時点で停止します。</p>
       <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-close>キャンセル</button><button type="submit" class="button primary">実行を開始</button></div>
     </form>
@@ -47,6 +66,6 @@
 
   <dialog id="stop-dialog"><form id="stop-form"><div class="dialog-heading"><h2>実行を停止しますか？</h2><button type="button" class="close" data-close aria-label="閉じる">×</button></div><p>動作中のエージェントと検証コマンドを終了します。途中までのファイル変更は残り、保存済み状態から再開できます。</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-close>続ける</button><button type="submit" class="button danger">実行を停止</button></div></form></dialog>
 
-  <dialog id="notification-dialog"><div class="dialog-heading"><div><p class="eyebrow">NOTIFICATIONS</p><h2>この端末の通知</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div><p>承認待ち・完了・実行エラーをお知らせします。通知を開くと該当する案件に移動します。</p><p class="hint">iPhoneではこの画面をホーム画面に追加し、追加したアイコンから開いてください。</p><p id="notification-status" class="notice"></p><div class="dialog-actions"><button id="notification-test" class="button quiet">テスト通知</button><button id="notification-toggle" class="button primary">通知を有効にする</button></div></dialog>
+  <dialog id="notification-dialog"><div class="dialog-heading"><div><p class="eyebrow">NOTIFICATIONS</p><h2>この端末の通知</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div><p>承認待ち・完了・実行エラーをお知らせします。通知を開くと該当するIssueに移動します。</p><p class="hint">iPhoneではこの画面をホーム画面に追加し、追加したアイコンから開いてください。</p><p id="notification-status" class="notice"></p><div class="dialog-actions"><button id="notification-test" class="button quiet">テスト通知</button><button id="notification-toggle" class="button primary">通知を有効にする</button></div></dialog>
 </body>
 </html>

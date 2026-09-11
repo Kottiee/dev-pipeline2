@@ -48,37 +48,39 @@ CLIだけを使う場合は `python -m pip install -e .` でも構いません�
 - `dev-pipeline`: パイプラインを直接操作するCLI
 - `dev-pipeline-web`: 同じCLIをバックグラウンド実行するWeb UI
 
-## CLIで直接実行する
+## CLIで直接実行する (Project + Issue 駆動)
 
-新規案件用のGitリポジトリを準備し、要求を渡します。`--repo` を省略した場合の成果物保存先は `work/<案件ID>/repo/` です。
+パイプラインは「リポジトリと共通設定を持つ **Project**」と「個々の開発要求を持つ **Issue**」の2層構造で動作します。
 
-```bash
-mkdir -p work/INIT-001/repo
-git init work/INIT-001/repo
-
-dev-pipeline --agent codex init \
-  --id INIT-001 \
-  --request "チームで使える軽量なタスク管理Webアプリを作る" \
-  --constraint "SQLiteで動作すること"
-```
-
-`init` は計画後、最初のフェーズを実装・検証・レビューし、Human Check待ちまで進めます。結果を確認して承認する場合は次のように続けます。
+### 1. プロジェクトの準備
 
 ```bash
-dev-pipeline show INIT-001
-dev-pipeline human-check INIT-001 ACCEPT
-dev-pipeline --agent codex run INIT-001 --until-ready
+# プロジェクト初期化 (リポジトリ作成または既存リポジトリバインド)
+dev-pipeline project init my-app --agent codex
+
+# プロジェクト一覧・詳細確認
+dev-pipeline project list
+dev-pipeline project show my-app
 ```
 
-修正が必要な場合：
+### 2. Issueの作成と実行
 
 ```bash
-dev-pipeline human-check INIT-001 FEEDBACK \
-  --feedback "検索後に戻っても条件を保持してほしい"
-dev-pipeline --agent codex run INIT-001 --until-ready
+# 新規Issueの作成 (自動計画・初期Run開始)
+dev-pipeline issue create my-app \
+  --id 0001-user-auth \
+  --request "ユーザー認証機能を追加する" \
+  --requirement "登録とログインができる"
+
+# 状態確認・承認
+dev-pipeline issue status my-app 0001-user-auth
+dev-pipeline issue human-check my-app 0001-user-auth ACCEPT
+dev-pipeline issue run my-app 0001-user-auth --until-ready
 ```
 
-既存リポジトリの指定、固定フェーズ、検証コマンド、停止後の再開、Agentの切り替えを含む全手順は[CLI操作ガイド](docs/cli-operations.md)を参照してください。
+Issueの最終フェーズが承認されると、そのIssueは `RESOLVED`（解決済み）となります。リポジトリはそのまま保持され、同じプロジェクトで次のIssue（例: `0002-csv-export`）を開始した際、過去に解決されたIssueの文脈（`$resolved_issues`）が自動的にプロンプトへ引き継がれます。
+
+*(後方互換性のため、従来の `dev-pipeline init --id INIT-001 ...` や `dev-pipeline run ...` も引き続き利用可能です)*
 
 ## Web UIで操作する
 
@@ -88,23 +90,26 @@ dev-pipeline --agent codex run INIT-001 --until-ready
 dev-pipeline-web --work-dir /絶対パス/work
 ```
 
-PCのブラウザーで `http://127.0.0.1:8787` を開きます。Web UIは新規依頼、進捗・ログ確認、承認、修正依頼、停止・再開を提供します。成果物自体を配信・実行する画面ではありません。
+PCやスマートフォンのブラウザーで `http://127.0.0.1:8787` を開きます。
+画面上部のプロジェクトセレクターから対象プロジェクトを切り替え、プロジェクトごとのIssue一覧、新規Issue作成、進捗・ログ確認、承認、修正依頼を行えます。
 
 スマートフォンからの接続、Tailscale、通知は[Web UI・スマートフォン操作ガイド](docs/mobile-operations.md)、macOSでの常時起動は[launchd常時起動ガイド](docs/launchd.md)を参照してください。
 
 ## 保存先
 
 ```text
-work/INIT-001/
-├── initiative.json             # 案件の目的・要件・フェーズ順・固定検証
-├── state.json                  # 現在の状態（Source of Truth）
-├── usage.json                  # トークン使用量・Agent割り当て使用率
-├── repo/                       # 既定の成果物リポジトリ
-├── phases/                     # フェーズ定義
-├── runs/                       # RunごとのCheckpoint
-├── feedback/                   # ACCEPT / FEEDBACKの記録
-├── evidence/                   # 検証・レビュー結果
-└── agent-logs/                 # Agent呼び出しの詳細ログ
+work/<プロジェクトID>/
+├── project.json                # プロジェクト設定 (リポジトリパス、標準エージェント、共通チェック)
+├── repo/                       # プロジェクト既定のGitリポジトリ
+└── issues/
+    └── <Issue ID>/             # 例: 0001-user-auth
+        ├── issue.json          # Issueの目的・要件・フェーズ順
+        ├── state.json          # 現在の状態（Source of Truth）
+        ├── usage.json          # トークン使用量・Agent割り当て使用率
+        ├── phases/             # フェーズ定義
+        ├── runs/               # RunごとのCheckpoint
+        ├── feedback/           # ACCEPT / FEEDBACKの記録
+        └── evidence/           # 検証・レビュー結果
 ```
 
 外部リポジトリを `--repo` で指定した場合、成果物は `work/` の外に置かれます。再開時も同じ `--work-dir`、案件ID、リポジトリを使用してください。

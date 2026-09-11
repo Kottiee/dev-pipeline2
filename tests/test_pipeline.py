@@ -59,25 +59,25 @@ class PipelineTests(unittest.TestCase):
              patch("dev_pipeline.cli.collect_agent_allocation", return_value=None):
             with patch("builtins.print"):
                 result = main(["--work-dir", str(store.root), "--repo", str(repo),
-                               "--agent", "codex", "init", "--plan-only", "--id", store.initiative_id,
+                               "--agent", "codex", "init", "--plan-only", "--id", store.issue_id,
                                "--request", "ship a usable feature"])
         self.assertEqual(0, result)
         self.assertEqual(repo, execute.call_args.args[1])
         self.assertEqual("PHASE_RUNNING", store.load_state().state)
         self.assertEqual("keep this", source.read_text(encoding="utf-8"))
 
-    def test_initialize_does_not_overwrite_existing_initiative(self):
-        before = self.store.read_json("initiative.json")
+    def test_initialize_does_not_overwrite_existing_issue(self):
+        before = self.store.read_json("issue.json")
         with self.assertRaises(FileExistsError):
             Pipeline.initialize(self.store, "replacement", [], [], PHASES)
-        self.assertEqual(before, self.store.read_json("initiative.json"))
+        self.assertEqual(before, self.store.read_json("issue.json"))
 
     def test_initialize_does_not_overwrite_partial_metadata(self):
         store = WorkStore(self.root / "work", "PARTIAL-001")
         (store.path / "phases").mkdir(parents=True)
         with self.assertRaises(FileExistsError):
             Pipeline.initialize(store, "ship", [], [], PHASES)
-        self.assertFalse((store.path / "initiative.json").exists())
+        self.assertFalse((store.path / "issue.json").exists())
 
     def test_continue_writes_checkpoint(self):
         agent = FakeAgent([{"result": "CONTINUE", "completed": ["core"], "remaining": ["UI"],
@@ -192,13 +192,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual("node --test", run.call_args.args[0])
         self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
 
-    def test_accept_last_phase_completes_initiative(self):
+    def test_accept_last_phase_completes_issue(self):
         state = self.store.load_state()
         state.state = "AWAITING_HUMAN_CHECK"
         state.current_phase = "phase-02"
         self.store.save_state(state)
         pipeline = Pipeline(self.store, self.root, FakeAgent([]))
-        self.assertEqual("COMPLETED", pipeline.human_check("ACCEPT"))
+        self.assertEqual("RESOLVED", pipeline.human_check("ACCEPT"))
         self.assertIsNone(self.store.load_state().current_phase)
         self.assertEqual("accepted", self.store.load_phase("phase-02").status)
 
@@ -253,7 +253,7 @@ class PipelineTests(unittest.TestCase):
         agent = FakeAgent([outcome])
         pipeline = Pipeline(self.store, self.root, agent)
         pipeline.run([("lint", "flake8")])
-        self.assertEqual([], self.store.load_initiative().checks)
+        self.assertEqual([], self.store.load_issue().checks)
 
     def test_run_no_verify_skips_verification_and_goes_to_review(self):
         agent = FakeAgent([

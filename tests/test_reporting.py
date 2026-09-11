@@ -56,6 +56,7 @@ class ReportingTests(unittest.TestCase):
         store = JsonStore(self.work_dir / ".web")
         store.write_json("settings.json", {"enabled": True})
         self.assertEqual({"enabled": True}, store.read_json("settings.json"))
+        self.assertFalse((store.path / "issue.json").exists())
         self.assertFalse((store.path / "initiative.json").exists())
 
 

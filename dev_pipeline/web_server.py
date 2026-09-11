@@ -74,6 +74,18 @@ def handler_for(service, origins, allowed_users=()):
                     self._send(200, {"csrf_token": csrf, "agents": AGENTS,
                                      "default_agent": service.default_agent,
                                      "notifications": service.notifications.status()})
+                elif path == "/api/projects":
+                    self._send(200, {"projects": service.list_projects()})
+                elif path.startswith("/api/projects/"):
+                    subparts = [unquote(p) for p in path.removeprefix("/api/projects/").split("/") if p]
+                    if len(subparts) == 1:
+                        self._send(200, service.project_detail(subparts[0]))
+                    elif len(subparts) == 2 and subparts[1] == "issues":
+                        self._send(200, {"issues": service.list_issues(subparts[0])})
+                    elif len(subparts) == 3 and subparts[1] == "issues":
+                        self._send(200, service.issue_detail(subparts[0], subparts[2]))
+                    else:
+                        self._send(404, {"error": "見つかりません"})
                 elif path == "/api/initiatives":
                     self._send(200, {"initiatives": service.list_initiatives()})
                 elif path.startswith("/api/initiatives/"):
@@ -101,7 +113,23 @@ def handler_for(service, origins, allowed_users=()):
                 if not isinstance(data, dict):
                     raise ValueError("JSONオブジェクトが必要です")
                 path = urlparse(self.path).path
-                if path == "/api/initiatives":
+                if path == "/api/projects":
+                    self._send(201, service.create_project(data))
+                elif path.startswith("/api/projects/"):
+                    subparts = [unquote(p) for p in path.removeprefix("/api/projects/").split("/") if p]
+                    if len(subparts) == 2 and subparts[1] == "issues":
+                        self._send(202, service.create_issue(subparts[0], data))
+                    elif len(subparts) == 4 and subparts[1] == "issues":
+                        project_id, issue_id, action = subparts[0], subparts[2], subparts[3]
+                        if action == "stop":
+                            self._send(200, service.stop_issue(project_id, issue_id))
+                        elif action == "configure":
+                            self._send(200, service.configure_issue(project_id, issue_id, data))
+                        else:
+                            self._send(202, service.act_issue(project_id, issue_id, action, data))
+                    else:
+                        self._send(404, {"error": "見つかりません"})
+                elif path == "/api/initiatives":
                     self._send(202, service.create(data))
                 elif path == "/api/notifications/subscribe":
                     subscription = data.get("subscription")
