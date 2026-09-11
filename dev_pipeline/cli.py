@@ -72,7 +72,8 @@ def _plan(args: argparse.Namespace, agent: Agent, repository: Path,
     keys = {"goal", "requirements", "constraints", "phases"}
     if not keys.issubset(data) or not isinstance(data["phases"], list) or not data["phases"]:
         raise ValueError("planner returned an invalid issue")
-    return data["goal"], data["requirements"], data["constraints"], data["phases"], result.stdout
+    planner_output = f"{result.stdout}\n{result.stderr}".strip() if result.stderr.strip() else result.stdout
+    return data["goal"], data["requirements"], data["constraints"], data["phases"], planner_output
 
 
 def _project_resolved_context(p_store: ProjectStore) -> str:

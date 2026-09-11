@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterable
 
 
@@ -20,9 +21,14 @@ def _valid_count(value: Any) -> bool:
 def summarize_token_usage(usages: Iterable[Any]) -> dict[str, int]:
     summary = {field: 0 for field in TOKEN_USAGE_FIELDS}
     summary["reported_invocations"] = 0
+    total_tokens = 0
     for usage in usages:
         if not isinstance(usage, dict):
             continue
+        item_in = usage.get("input_tokens", 0)
+        item_out = usage.get("output_tokens", 0)
+        item_total = usage.get("total_tokens", 0)
+        has_breakdown = _valid_count(item_in) and _valid_count(item_out) and (item_in > 0 or item_out > 0)
         for field in TOKEN_USAGE_FIELDS:
             value = usage.get(field, 0)
             if _valid_count(value):
@@ -30,7 +36,11 @@ def summarize_token_usage(usages: Iterable[Any]) -> dict[str, int]:
         reported = usage.get("reported_invocations", 1)
         if _valid_count(reported):
             summary["reported_invocations"] += reported
-    summary["total_tokens"] = summary["input_tokens"] + summary["output_tokens"]
+        if has_breakdown:
+            total_tokens += item_in + item_out
+        elif _valid_count(item_total):
+            total_tokens += item_total
+    summary["total_tokens"] = total_tokens
     return summary
 
 
@@ -78,7 +88,34 @@ def _extract_codex_usage(output: str | None) -> dict[str, int] | None:
         else:
             usage["reported_invocations"] = 1
             usages.append(usage)
-    return summarize_token_usage(usages) if usages else None
+    if usages:
+        return summarize_token_usage(usages)
+    if output:
+        matches = re.findall(
+            r"(?:tokens\s+used|token\s+usage)(?:\s*:|\n)\s*([0-9,]+)",
+            output,
+            re.IGNORECASE,
+        )
+        if matches:
+            total_sum = 0
+            invocations = 0
+            for raw_num in matches:
+                clean = raw_num.replace(",", "").strip()
+                if clean.isdigit():
+                    val = int(clean)
+                    if val >= 0:
+                        total_sum += val
+                        invocations += 1
+            if invocations > 0:
+                return {
+                    "input_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_output_tokens": 0,
+                    "total_tokens": total_sum,
+                    "reported_invocations": invocations,
+                }
+    return None
 
 
 def _extract_antigravity_usage(output: str | None) -> dict[str, int] | None:

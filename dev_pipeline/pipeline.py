@@ -84,7 +84,7 @@ class Pipeline:
         except AgentError as error:
             self._record_failure_usage("run", phase.id, state.current_run, error)
             raise
-        self._record_usage("run", phase.id, state.current_run, result.stdout)
+        self._record_usage("run", phase.id, state.current_run, self._combined_output(result))
         outcome = RunOutcome.from_dict(result.data)
         run_id = f"run-{state.current_run:03d}"
         self.store.write_text(f"runs/{phase.id}-{run_id}.md", self._checkpoint(phase, outcome))
@@ -171,7 +171,7 @@ class Pipeline:
         except AgentError as error:
             self._record_failure_usage("review", phase.id, state.current_run, error)
             raise
-        self._record_usage("review", phase.id, state.current_run, result.stdout)
+        self._record_usage("review", phase.id, state.current_run, self._combined_output(result))
         decision = result.data.get("result")
         findings = result.data.get("findings", [])
         if decision not in {"PASS", "FINDINGS"} or not isinstance(findings, list):
@@ -326,6 +326,12 @@ class Pipeline:
             event["allocation_usage"] = allocation
         self.store.record_usage_event(event)
 
+    @staticmethod
+    def _combined_output(result: AgentResult) -> str:
+        if result.stderr.strip():
+            return f"{result.stdout}\n{result.stderr}"
+        return result.stdout
+
     def _record_failure_usage(self, stage: str, phase_id: str, run_number: int,
                               error: AgentError) -> None:
         outputs = []
@@ -345,6 +351,9 @@ class Pipeline:
             stdout = payload.get("stdout") if isinstance(payload, dict) else None
             if isinstance(stdout, str) and stdout:
                 outputs.append(stdout)
+            stderr = payload.get("stderr") if isinstance(payload, dict) else None
+            if isinstance(stderr, str) and stderr:
+                outputs.append(stderr)
         self._record_usage(stage, phase_id, run_number, "\n".join(outputs))
 
     @staticmethod

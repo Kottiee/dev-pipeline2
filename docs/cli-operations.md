@@ -276,7 +276,7 @@ dev-pipeline --repo /絶対パス/repo --agent codex review INIT-001
 dev-pipeline --agent codex run INIT-001 --until-ready
 ```
 
-既定コマンドは `codex exec --sandbox workspace-write -` です。モデルと認証はCodex CLIの設定を使います。
+既定コマンドは `codex exec --sandbox workspace-write --json -` です。モデルと認証はCodex CLIの設定を使います。
 
 ### OpenCode
 

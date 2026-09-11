@@ -39,6 +39,25 @@ class AdapterSelectionTests(unittest.TestCase):
             self.assertEqual("PASS", agent.execute("prompt", Path(".")).data["result"])
         self.assertEqual(["codex-wrapper", "-"], run.call_args.args[0])
 
+    def test_codex_default_command_includes_json(self):
+        agent = create_agent("codex")
+        self.assertIn("--json", agent.command)
+
+    def test_codex_parses_jsonl_events_and_retains_events_in_stdout(self):
+        agent = create_agent("codex")
+        jsonl_output = "\n".join([
+            json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "thinking..."}}),
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": '{"result":"GOAL_REACHED"}'}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100, "output_tokens": 50}}),
+        ])
+        with patch("dev_pipeline.agents.process.subprocess.run",
+                   return_value=completed(jsonl_output)):
+            result = agent.execute("prompt", Path("."))
+        self.assertEqual("GOAL_REACHED", result.data["result"])
+        self.assertEqual(jsonl_output, result.stdout)
+
     def test_opencode_command_override_preserves_events_and_recovery(self):
         agent = create_agent("opencode", "opencode-wrapper run -m provider/model")
         with patch("dev_pipeline.agents.process.subprocess.run", side_effect=[
