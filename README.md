@@ -121,6 +121,7 @@ work/<プロジェクトID>/
 - [launchd常時起動ガイド](docs/launchd.md): macOSログイン時の自動起動と管理
 - [トラブル対応](docs/troubleshooting.md): 利用者・管理者向けの切り分け
 - [業務仕様](spec.md): 役割、承認基準、安全上の境界
+- [E2E動作確認・検証指示書](docs/e2e-verification.md): 新規プロジェクト作成からIssue完了・次Issue追加までのE2E検証手順
 - [Antigravity実行安定性 調査レポート](docs/antigravity-stability-report.md): 既知の挙動と改善案
 
 ## 利用上の注意

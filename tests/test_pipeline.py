@@ -292,7 +292,7 @@ class AgentParsingTests(unittest.TestCase):
         with patch("dev_pipeline.agents.process.subprocess.run",
                    return_value=CompletedProcess("codex", 0, '{"result":"PASS"}', "")) as run:
             agent.execute("prompt", Path("."))
-        self.assertEqual(["codex", "exec", "--sandbox", "workspace-write", "-"],
+        self.assertEqual(["codex", "exec", "--sandbox", "workspace-write", "--json", "-"],
                          run.call_args.args[0])
 
     def test_extracts_final_json_after_noisy_output(self):

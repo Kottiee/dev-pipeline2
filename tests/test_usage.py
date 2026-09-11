@@ -53,6 +53,27 @@ class UsageExtractionTests(unittest.TestCase):
         output = codex_output("{}", "plain text", json.dumps({"type": "turn.completed"}))
         self.assertIsNone(extract_token_usage(output, "codex"))
 
+    def test_codex_extracts_tokens_from_plain_text_stderr(self):
+        stderr = (
+            "OpenAI Codex v0.152.0\n"
+            "--------\n"
+            "user\n"
+            "hello\n"
+            "codex\n"
+            "world\n"
+            "tokens used\n"
+            "10,305\n"
+        )
+        usage = extract_token_usage(stderr, "codex")
+        self.assertEqual(10305, usage["total_tokens"])
+        self.assertEqual(1, usage["reported_invocations"])
+        self.assertEqual(0, usage["input_tokens"])
+
+        colon_format = "tokens used: 1,500\ntokens used: 2,500"
+        usage2 = extract_token_usage(colon_format, "codex")
+        self.assertEqual(4000, usage2["total_tokens"])
+        self.assertEqual(2, usage2["reported_invocations"])
+
     def test_opencode_normalizes_cache_and_reasoning_into_totals(self):
         step = {"type": "step_finish", "part": {"tokens": {
             "input": 10, "cache": {"read": 5, "write": 3},
@@ -197,13 +218,14 @@ class UsagePersistenceTests(unittest.TestCase):
 
 
 class CodexRunAgent:
-    def __init__(self, stdout):
+    def __init__(self, stdout, stderr=""):
         self.stdout = stdout
+        self.stderr = stderr
 
     def execute(self, prompt, repository):
         data = {"result": "CONTINUE", "completed": ["core"], "remaining": [],
                 "problems": [], "recommended_next_action": "next"}
-        return AgentResult(data, self.stdout, "")
+        return AgentResult(data, self.stdout, self.stderr)
 
 
 class UsagePipelineTests(unittest.TestCase):
@@ -231,6 +253,17 @@ class UsagePipelineTests(unittest.TestCase):
         self.assertEqual(1, events[0]["run"])
         self.assertEqual(1, self.store.load_token_usage()["reported_invocations"])
 
+    def test_run_records_usage_from_agent_stderr_when_stdout_has_no_tokens(self):
+        stdout = json.dumps({"result": "CONTINUE", "completed": [], "remaining": [], "problems": [], "recommended_next_action": ""})
+        stderr = "tokens used\n12,345\n"
+        agent = CodexRunAgent(stdout, stderr)
+        result = Pipeline(self.store, self.root, agent).run([])
+        self.assertEqual("CONTINUE", result)
+        events = self.store._usage_events()
+        self.assertEqual(1, len(events))
+        self.assertEqual(12345, events[0]["usage"]["total_tokens"])
+        self.assertEqual(12345, self.store.load_token_usage()["total_tokens"])
+
     def test_failed_execution_usage_is_recovered_from_saved_logs(self):
         log_dir = self.store.path / "agent-logs"
         log_dir.mkdir(parents=True)
@@ -251,6 +284,26 @@ class UsagePipelineTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual(80, events[0]["usage"]["input_tokens"])
         self.assertEqual(120, self.store.load_token_usage()["total_tokens"])
+
+    def test_failed_execution_recovers_tokens_from_saved_stderr(self):
+        log_dir = self.store.path / "agent-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "failedrun-1.json").write_text(json.dumps({
+            "command": [], "repository": str(self.root), "prompt": "", "returncode": 1,
+            "stdout": "error output", "stderr": "something went wrong\ntokens used\n4,567\n",
+        }), encoding="utf-8")
+
+        class FailingAgent:
+            def execute(self, prompt, repository):
+                raise AgentError("failed", log_dir / "failedrun-1.json")
+
+        pipeline = Pipeline(self.store, self.root, FailingAgent())
+        with self.assertRaisesRegex(AgentError, "failed"):
+            pipeline.run([])
+        events = self.store._usage_events()
+        self.assertEqual(1, len(events))
+        self.assertEqual(4567, events[0]["usage"]["total_tokens"])
+        self.assertEqual(4567, self.store.load_token_usage()["total_tokens"])
 
     def test_show_renders_totals_and_unavailable(self):
         stdout = codex_output(
