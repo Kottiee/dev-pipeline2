@@ -77,6 +77,8 @@ class AdapterSelectionTests(unittest.TestCase):
             {"result": "GOAL_REACHED", "completed": ["feature"], "remaining": [],
              "problems": [], "recommended_next_action": "review"},
             {"result": "PASS", "findings": []},
+            {"recommendation": "APPROVE", "decision_reason": "確認済みです",
+             "affected_scope": "対象機能", "required_action": "承認してください", "items": []},
         ])
         calls = []
 
@@ -97,7 +99,7 @@ class AdapterSelectionTests(unittest.TestCase):
                 self.assertEqual(0, main(args + ["run", "TEST", "--until-ready", "--check", check]))
                 self.assertEqual(0, main(args + ["human-check", "TEST", "ACCEPT"]))
             self.assertEqual("RESOLVED", WorkStore(repo / "work", "TEST").load_state().state)
-        self.assertEqual(3, len(calls))
+        self.assertEqual(4, len(calls))
         self.assertTrue(all(repository == repo for _, repository in calls))
 
     def test_init_without_repo_derives_and_creates_default_repository(self):
@@ -151,6 +153,8 @@ class AdapterSelectionTests(unittest.TestCase):
             {"result": "GOAL_REACHED", "completed": ["feature"], "remaining": [],
              "problems": [], "recommended_next_action": "verify"},
             {"result": "PASS", "findings": []},
+            {"recommendation": "APPROVE", "decision_reason": "確認済みです",
+             "affected_scope": "対象機能", "required_action": "承認してください", "items": []},
         ])
         calls = []
 
@@ -173,7 +177,7 @@ class AdapterSelectionTests(unittest.TestCase):
             self.assertEqual(0, result)
             self.assertEqual("AWAITING_HUMAN_CHECK", store.load_state().state)
             self.assertTrue(store.path.joinpath("repo").is_dir())
-            self.assertEqual(3, len(calls))
+            self.assertEqual(4, len(calls))
             self.assertTrue(all(repo == store.path / "repo" for repo in calls))
 
     def test_generic_adapter_runs_real_process_with_stdin_cwd_and_logs(self):

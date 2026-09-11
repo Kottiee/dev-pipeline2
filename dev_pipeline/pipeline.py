@@ -192,7 +192,92 @@ class Pipeline:
             state.state = "PHASE_RUNNING"
         self.store.save_phase(phase)
         self.store.save_state(state)
+        self._generate_review_summary(issue, phase, state.current_run, decision, findings)
         return decision == "PASS"
+
+    def _generate_review_summary(
+        self, issue: Issue, phase: Phase, run_number: int,
+        decision: str, findings: list[Any],
+    ) -> None:
+        """Create optional business-facing evidence without affecting review state."""
+        path = f"evidence/{phase.id}-review-summary.json"
+        try:
+            self.store.write_json(path, {
+                "phase_id": phase.id,
+                "run_id": run_number,
+                "status": "PENDING",
+                "created_at": now_iso(),
+            })
+            result = self.agent.execute(
+                self._review_summary_prompt(issue, phase, decision, findings),
+                self.repository,
+            )
+            self._record_usage("review_summary", phase.id, run_number, result.stdout)
+            summary = self._validate_review_summary(result.data, decision, len(findings))
+            self.store.write_json(path, {
+                "phase_id": phase.id,
+                "run_id": run_number,
+                "status": "SUCCESS",
+                **summary,
+                "created_at": now_iso(),
+            })
+            self.store.write_text(
+                f"evidence/{phase.id}-review-summary-agent.log",
+                result.stdout + result.stderr,
+            )
+        except Exception as error:
+            if isinstance(error, AgentError):
+                self._record_failure_usage("review_summary", phase.id, run_number, error)
+            self.store.write_json(path, {
+                "phase_id": phase.id,
+                "run_id": run_number,
+                "status": "FAILED",
+                "error": "要約を生成できませんでした",
+                "created_at": now_iso(),
+            })
+
+    @staticmethod
+    def _validate_review_summary(
+        value: Any, decision: str, finding_count: int,
+    ) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError("review summary must be an object")
+        expected_recommendation = "APPROVE" if decision == "PASS" else "REQUEST_CHANGES"
+        if value.get("recommendation") != expected_recommendation:
+            raise ValueError("review summary recommendation does not match review")
+        for key in ("decision_reason", "affected_scope", "required_action"):
+            if not isinstance(value.get(key), str) or not value[key].strip():
+                raise ValueError(f"review summary must include {key}")
+        items = value.get("items")
+        if not isinstance(items, list):
+            raise ValueError("review summary must include items")
+        if decision == "PASS" and items:
+            raise ValueError("approved review summary must not include finding items")
+        covered: set[int] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("review summary items must be objects")
+            finding_ids = item.get("finding_ids")
+            if not isinstance(finding_ids, list) or not finding_ids:
+                raise ValueError("review summary item must reference findings")
+            if any(not isinstance(finding_id, int)
+                   or isinstance(finding_id, bool)
+                   or finding_id < 1 or finding_id > finding_count
+                   for finding_id in finding_ids):
+                raise ValueError("review summary item references an unknown finding")
+            covered.update(finding_ids)
+            for key in ("problem", "business_impact", "affected_scope", "required_action"):
+                if not isinstance(item.get(key), str) or not item[key].strip():
+                    raise ValueError(f"review summary item must include {key}")
+        if decision == "FINDINGS" and covered != set(range(1, finding_count + 1)):
+            raise ValueError("review summary must cover every finding")
+        return {
+            "recommendation": expected_recommendation,
+            "decision_reason": value["decision_reason"].strip(),
+            "affected_scope": value["affected_scope"].strip(),
+            "required_action": value["required_action"].strip(),
+            "items": items,
+        }
 
     def human_check(self, result: str, feedback: str | None = None,
                     expected_revision: str | None = None) -> str:
@@ -305,6 +390,24 @@ class Pipeline:
             acceptance_criteria=str(phase.acceptance_criteria),
             context=self._phase_context(phase),
             manifest_file=TEST_MANIFEST_FILE,
+        )
+
+    def _review_summary_prompt(
+        self, issue: Issue, phase: Phase, decision: str, findings: list[Any],
+    ) -> str:
+        numbered_findings = [
+            {"id": index, **finding} if isinstance(finding, dict)
+            else {"id": index, "description": str(finding)}
+            for index, finding in enumerate(findings, 1)
+        ]
+        return render_prompt(
+            "review-summary",
+            goal=issue.goal,
+            requirements=json.dumps(issue.requirements, ensure_ascii=False),
+            phase_goal=phase.goal,
+            acceptance_criteria=json.dumps(phase.acceptance_criteria, ensure_ascii=False),
+            review_result=decision,
+            findings=json.dumps(numbered_findings, ensure_ascii=False),
         )
 
     def _token_usage_format(self) -> str:

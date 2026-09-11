@@ -100,9 +100,20 @@ function renderList() {
 function phaseOptions() {
   return detail.phases.map(p => `<option value="${esc(p.id)}" ${p.id === evidencePhase ? 'selected':''}>${esc(p.id)} · ${esc(p.goal)}</option>`).join('');
 }
+function technicalFindings(result, open = false) {
+  const findings = result.findings || [];
+  return `<details id="technical-review-details" ${open?'open':''}><summary>技術的な詳細</summary><div class="result-card"><div class="result-heading">${badge(result.result,result.result === 'PASS'?'success':'error')}<strong>元のレビュー結果</strong><span class="muted">${result.run_id != null ? 'Run ' + esc(result.run_id) + ' · ' : ''}${esc(timestamp(result.created_at))}</span></div>${findings.length ? findings.map((f,index) => `<div class="finding" id="review-finding-${index + 1}" tabindex="-1"><div class="finding-label"><strong>指摘 #${index + 1}</strong>${badge(f.severity || '指摘', ['high','critical'].includes(f.severity)?'error':'waiting')}</div><p>${esc(f.description)}</p>${f.recommendation ? `<p class="recommendation">${esc(f.recommendation)}</p>`:''}</div>`).join('') : '<div class="finding"><p>レビューで指摘事項はありませんでした。</p></div>'}</div></details>`;
+}
+function businessReviewSummary(summary) {
+  if (summary?.status === 'PENDING') return '<p class="notice">業務向け要約を生成しています。元のレビュー結果は技術的な詳細で確認できます。</p>';
+  if (!summary || summary.status !== 'SUCCESS') return '<p class="notice error">要約を生成できませんでした。技術的な詳細で元のレビュー結果を確認してください。</p>';
+  const approve = summary.recommendation === 'APPROVE';
+  const items = summary.items || [];
+  return `<div class="business-summary"><div class="result-heading">${badge(approve?'承認してよい':'修正を依頼',approve?'success':'error')}<strong>業務向け要約</strong></div><div class="summary-overview"><h4>判断の理由</h4><p>${esc(summary.decision_reason)}</p><h4>影響する範囲</h4><p>${esc(summary.affected_scope)}</p><h4>判断・指示すること</h4><p>${esc(summary.required_action)}</p></div>${items.map(item => `<div class="business-finding"><div class="finding-refs">${(item.finding_ids || []).map(id => `<button type="button" data-finding-id="${esc(id)}">技術的な指摘 #${esc(id)}</button>`).join('')}</div><h4>何が問題か</h4><p>${esc(item.problem)}</p><h4>業務上の不都合</h4><p>${esc(item.business_impact)}</p><h4>影響する範囲</h4><p>${esc(item.affected_scope)}</p><h4>判断・指示すること</h4><p>${esc(item.required_action)}</p></div>`).join('')}</div>`;
+}
 function evidenceView() {
   const ev = detail.evidence.find(e => e.phase_id === evidencePhase);
-  const head = `<div class="evidence-heading"><h3>${tab === 'tests' ? '機械検証' : '敵対的レビュー'}</h3><select id="evidence-phase" aria-label="結果を見るフェーズ">${phaseOptions()}</select></div>`;
+  const head = `<div class="evidence-heading"><h3>${tab === 'tests' ? '機械検証' : 'レビュー結果'}</h3><select id="evidence-phase" aria-label="結果を見るフェーズ">${phaseOptions()}</select></div>`;
   if (!ev) return head + '<p class="muted">フェーズの計画ができると表示されます。</p>';
   if (tab === 'tests') {
     const result = ev.verification;
@@ -111,7 +122,8 @@ function evidenceView() {
   }
   const result = ev.review;
   if (!result) return head + '<p class="muted">このフェーズのレビュー結果はまだありません。</p>';
-  return head + `<div class="result-card"><div class="result-heading">${badge(result.result,result.result === 'PASS'?'success':'error')}<strong>レビュー結果</strong><span class="muted">${result.run_id != null ? 'Run ' + esc(result.run_id) + ' · ' : ''}${esc(timestamp(result.created_at))}</span></div>${result.findings?.length ? result.findings.map(f => `<div class="finding">${badge(f.severity || '指摘', ['high','critical'].includes(f.severity)?'error':'waiting')}<p>${esc(f.description)}</p>${f.recommendation ? `<p class="recommendation">${esc(f.recommendation)}</p>`:''}</div>`).join('') : '<div class="finding"><p>レビューで指摘事項はありませんでした。</p></div>'}</div><p class="hint">保存された最新のレビュー結果です。修正中は前回の結果が表示されます。</p>`;
+  const summary = ev.review_summary;
+  return head + businessReviewSummary(summary) + technicalFindings(result,!summary || summary.status !== 'SUCCESS') + '<p class="hint">保存された最新のレビュー結果です。修正中は前回の結果が表示されます。</p>';
 }
 function overviewView() {
   const current = detail.phases.find(p => p.id === detail.state.current_phase);
@@ -150,6 +162,7 @@ function renderDetail(force = false) {
   $('#back').onclick = () => updateHash(currentProjectId, '');
   document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {tab=button.dataset.tab;renderDetail(true);});
   if ($('#evidence-phase')) $('#evidence-phase').onchange = event => {evidencePhase=event.target.value;renderDetail(true);};
+  document.querySelectorAll('[data-finding-id]').forEach(button => button.onclick = () => {const details=$('#technical-review-details');if(details)details.open=true;const finding=$('#review-finding-'+button.dataset.findingId);if(finding){finding.scrollIntoView({behavior:'smooth',block:'center'});finding.focus({preventScroll:true});}});
   if ($('#run')) $('#run').onclick = () => action('run');
   if ($('#accept')) $('#accept').onclick = () => action('human-check',{result:'ACCEPT',revision:detail.revision});
   if ($('#feedback-open')) $('#feedback-open').onclick = () => {decisionSnapshot={id:selected,revision:detail.revision};$('#feedback-phase').textContent=detail.state.current_phase+' · '+current.goal;openDialog('feedback-dialog');};

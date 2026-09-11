@@ -37,6 +37,7 @@ class ReportingTests(unittest.TestCase):
                          result["actions"])
         self.assertEqual("phase-01", result["evidence"][0]["phase_id"])
         self.assertIsNone(result["evidence"][0]["verification"])
+        self.assertIsNone(result["evidence"][0]["review_summary"])
         self.assertEqual("", result["checkpoint"])
 
         state = self.store.load_state()
@@ -46,6 +47,17 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual({"run": False, "human_check": True, "completed": False},
                          result["actions"])
         self.assertNotIn("evidence", result)
+
+    def test_read_model_contains_review_summary_evidence(self):
+        summary = {
+            "phase_id": "phase-01", "run_id": 1, "status": "SUCCESS",
+            "recommendation": "APPROVE", "decision_reason": "問題なし",
+            "affected_scope": "対象フェーズ", "required_action": "承認",
+            "items": [], "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        self.store.write_json("evidence/phase-01-review-summary.json", summary)
+        self.assertEqual(summary, read_pipeline(
+            self.work_dir, "TEST-1")["evidence"][0]["review_summary"])
 
     def test_discovery_and_default_repository_hide_storage_layout(self):
         self.assertTrue(initiative_exists(self.work_dir, "TEST-1"))
