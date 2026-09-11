@@ -182,12 +182,12 @@ PCがスリープ、ログアウト、電源切れ、ネットワーク切断に
 cd ~/Projects/dev-pipeline2
 source .venv/bin/activate
 
-# 開発用の別work-dirとポートでWebサーバーを起動
-dev-pipeline-web --work-dir ~/Projects/dev-pipeline2-dev-work --port 8788
+# 開発環境のworkディレクトリと別ポートでWebサーバーを起動
+dev-pipeline-web --work-dir ~/Projects/dev-pipeline2/work --port 8788
 ```
 
 CLIで動作確認する場合も同様に開発用ディレクトリを指定します。
 
 ```bash
-dev-pipeline --work-dir ~/Projects/dev-pipeline2-dev-work status <案件ID>
+dev-pipeline --work-dir ~/Projects/dev-pipeline2/work status <案件ID>
 ```
