@@ -73,7 +73,6 @@ def read_issue(work_dir: Path, project_id: str, issue_id: str,
     result: dict[str, Any] = {
         "project_id": project_id,
         "issue": issue.as_dict(),
-        "initiative": issue.as_dict(),
         "state": state.as_dict(),
         "revision": state.revision(),
         "phases": phases,
@@ -168,7 +167,6 @@ def read_pipeline(work_dir: Path, target_id: str,
     issue = store.load_issue()
     phases = [store.load_phase(phase_id).as_dict() for phase_id in issue.phase_order]
     result: dict[str, Any] = {
-        "initiative": issue.as_dict(),
         "issue": issue.as_dict(),
         "state": state.as_dict(),
         "revision": state.revision(),

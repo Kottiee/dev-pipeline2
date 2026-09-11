@@ -99,7 +99,8 @@ class Notifications:
                                           if s["endpoint"] != endpoint]
             self._save()
 
-    def notify(self, title: str, body: str, initiative_id: str | None = None):
+    def notify(self, title: str, body: str, issue_id: str | None = None, initiative_id: str | None = None):
+        target_id = issue_id or initiative_id
         if not self.sender:
             return
         with self.lock:
@@ -107,7 +108,7 @@ class Notifications:
                 return
             self.data["pending"].append({
                 "id": uuid.uuid4().hex, "title": title, "body": body,
-                "url": "/#" + (initiative_id or ""), "created": time.time(),
+                "url": "/#" + (target_id or ""), "created": time.time(),
                 "remaining": [s["endpoint"] for s in self.data["subscriptions"]],
             })
             self._save()

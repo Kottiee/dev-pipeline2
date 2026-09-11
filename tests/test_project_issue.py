@@ -4,6 +4,7 @@ import json
 import shlex
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -166,5 +167,18 @@ class ProjectIssueTests(unittest.TestCase):
             detail = svc.issue_detail("web-proj", "ISS-100")
             self.assertEqual(detail["issue"]["id"], "ISS-100")
             self.assertEqual(detail["config"]["agent"], "antigravity")
+
+            svc.stop_issue("web-proj", "ISS-100")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                det = svc.issue_detail("web-proj", "ISS-100")
+                if det["job"]["status"] not in ("queued", "running", "stopping"):
+                    break
+                time.sleep(0.05)
+
+            new_conf = svc.configure_issue("web-proj", "ISS-100", {"agent": "codex", "repository": detail["config"]["repository"]})
+            self.assertEqual(new_conf["agent"], "codex")
+            detail = svc.issue_detail("web-proj", "ISS-100")
+            self.assertEqual(detail["config"]["agent"], "codex")
         finally:
             svc.close()

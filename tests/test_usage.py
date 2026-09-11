@@ -258,7 +258,7 @@ class UsagePipelineTests(unittest.TestCase):
         )
         Pipeline(self.store, self.root, CodexRunAgent(stdout)).run([])
         shown = _show(self.store)
-        self.assertIn("Initiative: INIT-001", shown)
+        self.assertIn("Issue: INIT-001", shown)
         self.assertIn("Token usage: 3,234 total (input 1,234, output 2,000, cached 0, reasoning 0)", shown)
         quiet = WorkStore(self.root / "work", "QUIET-001")
         Pipeline.initialize(quiet, "quiet", [], [], PHASES)

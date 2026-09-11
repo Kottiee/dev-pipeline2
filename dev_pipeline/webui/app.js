@@ -87,12 +87,15 @@ function renderList() {
   $('#summary').innerHTML = `<div class="metric waiting"><span>あなたの確認待ち</span><strong>${waiting}</strong></div><div class="metric"><span>実行中</span><strong>${active}</strong></div>`;
   const shown = items.filter(item => filter === 'all' || filter === 'waiting' && item.actions.human_check && !jobActive(item) || filter === 'active' && jobActive(item) || filter === 'done' && item.actions.completed);
   shown.sort((a,b) => Number(b.actions.human_check) - Number(a.actions.human_check) || (b.job?.created_at || '').localeCompare(a.job?.created_at || ''));
-  $('#initiative-list').innerHTML = shown.length ? shown.map(item => {
-    const id = item.issue?.id || item.initiative?.id, accepted = item.phases.filter(phase => phase.status === 'accepted').length;
-    const goal = item.issue?.goal || item.initiative?.goal;
-    const href = currentProjectId ? `#${encodeURIComponent(currentProjectId)}/${encodeURIComponent(id)}` : `#${encodeURIComponent(id)}`;
-    return `<a class="initiative-card ${id === selected ? 'selected':''}" href="${href}"><div class="card-top"><span class="id">${esc(id)}</span>${badge(...status(item))}</div><h3>${esc(goal)}</h3><div class="card-bottom"><span>${accepted} / ${item.phases.length} フェーズ完了</span><span class="phase-dots">${item.phases.map(p => `<i class="${esc(p.status)}"></i>`).join('')}</span></div></a>`;
-  }).join('') : `<div class="empty-list"><strong>${items.length ? '該当するIssueはありません' : '最初のIssueを始めましょう'}</strong>${items.length ? '別の絞り込みを選んでください。' : '「新規Issue」から目的や要件を入力すると、<br>ローカルPCで開発が始まります。'}</div>`;
+  const listEl = $('#issue-list') || $('#initiative-list');
+  if (listEl) {
+    listEl.innerHTML = shown.length ? shown.map(item => {
+      const id = item.issue?.id, accepted = item.phases.filter(phase => phase.status === 'accepted').length;
+      const goal = item.issue?.goal;
+      const href = currentProjectId ? `#${encodeURIComponent(currentProjectId)}/${encodeURIComponent(id)}` : `#${encodeURIComponent(id)}`;
+      return `<a class="issue-card ${id === selected ? 'selected':''}" href="${href}"><div class="card-top"><span class="id">${esc(id)}</span>${badge(...status(item))}</div><h3>${esc(goal)}</h3><div class="card-bottom"><span>${accepted} / ${item.phases.length} フェーズ完了</span><span class="phase-dots">${item.phases.map(p => `<i class="${esc(p.status)}"></i>`).join('')}</span></div></a>`;
+    }).join('') : `<div class="empty-list"><strong>${items.length ? '該当するIssueはありません' : '最初のIssueを始めましょう'}</strong>${items.length ? '別の絞り込みを選んでください。' : '「新規Issue」から目的や要件を入力すると、<br>ローカルPCで開発が始まります。'}</div>`;
+  }
 }
 function phaseOptions() {
   return detail.phases.map(p => `<option value="${esc(p.id)}" ${p.id === evidencePhase ? 'selected':''}>${esc(p.id)} · ${esc(p.goal)}</option>`).join('');
@@ -112,7 +115,7 @@ function evidenceView() {
 }
 function overviewView() {
   const current = detail.phases.find(p => p.id === detail.state.current_phase);
-  const iss = detail.issue || detail.initiative;
+  const iss = detail.issue;
   return `${current ? `<section class="section"><h3>このフェーズの受け入れ条件</h3><ul>${current.acceptance_criteria.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></section>`:''}
   <section class="section"><h3>フェーズ構成</h3><div class="phase-list">${detail.phases.map((p,i)=>`<div class="phase-item"><span class="phase-index">${String(i+1).padStart(2,'0')}</span><p>${esc(p.goal)}</p>${badge(phases[p.status],p.status==='accepted'?'success':p.status==='awaiting_human_check'?'waiting':'')}</div>`).join('') || '<p class="muted">要求からフェーズを計画しています。</p>'}</div></section>
   ${detail.checkpoint ? `<details><summary>直近Runのチェックポイント</summary><pre class="log">${esc(detail.checkpoint)}</pre></details>`:''}
@@ -129,7 +132,7 @@ function actionBar() {
 function renderDetail(force = false) {
   document.body.classList.toggle('has-selection', !!selected);
   if (!detail || !selected) {
-    $('#detail-pane').innerHTML = '<div class="empty-detail"><span class="empty-mark">↗</span><h2>案件を選んで確認</h2><p>進行状況、テスト結果、レビュー結果を<br>ここで確認できます。</p></div>'; lastRender=''; return;
+    $('#detail-pane').innerHTML = '<div class="empty-detail"><span class="empty-mark">↗</span><h2>Issueを選んで確認</h2><p>進行状況、テスト結果、レビュー結果を<br>ここで確認できます。</p></div>'; lastRender=''; return;
   }
   const signature = JSON.stringify([detail,tab,evidencePhase,submitting]);
   if (!force && signature === lastRender) return;
@@ -138,11 +141,11 @@ function renderDetail(force = false) {
   const current = detail.phases.find(p => p.id === detail.state.current_phase);
   const count = detail.phases.filter(p => p.status === 'accepted').length;
   const allocations = Object.values(detail.allocation_usage || {}).flatMap(a => (a.buckets || []).map(b => `<span>${esc(b.label)}: ${Number(b.used_percent).toLocaleString()}% 使用</span>`)).join('');
-  const iss = detail.issue || detail.initiative;
+  const iss = detail.issue;
   $('#detail-pane').innerHTML = `<button class="back" id="back">← Issue一覧</button><header class="detail-header"><p class="id">${esc(iss.id)}</p><div class="title-line"><h1>${esc(iss.goal)}</h1>${badge(...status(detail))}</div><div class="detail-meta"><span>${esc(detail.config.agent)}</span><span>${count} / ${detail.phases.length} フェーズ完了</span>${detail.usage.total_tokens != null?`<span>${Number(detail.usage.total_tokens).toLocaleString()} tokens</span>`:''}${allocations}</div></header>
   ${detail.job?.error ? `<p class="notice error">${esc(detail.job.error)}</p>`:''}
   ${current ? `<section class="phase-card"><div class="row"><span class="eyebrow">CURRENT PHASE · ${esc(current.id)}</span><span class="muted">Run ${esc(detail.state.current_run)}</span></div><h2>${esc(current.goal)}</h2><div class="phase-track">${detail.phases.map(p=>`<span class="${esc(p.status)}"></span>`).join('')}</div><p class="muted">${jobActive(detail)?'ローカルPCで処理を進めています。':detail.actions.human_check?'テストとレビューが完了しました。あなたの判断を待っています。':'実行を再開できます。'}</p></section>`:''}
-  <nav class="tabs" aria-label="案件の表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
+  <nav class="tabs" aria-label="Issueの表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
   <div id="tab-content">${tab==='overview'?overviewView():tab==='logs'?`<h3>直近の実行ログ</h3><p class="hint">エラーとCLIの実行結果を表示します。エージェント内部のログはPC側に保存されます。</p><pre class="log">${esc(detail.job_log || '出力はまだありません。')}</pre>`:evidenceView()}</div>${actionBar()}`;
   $('#back').onclick = () => updateHash(currentProjectId, '');
   document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {tab=button.dataset.tab;renderDetail(true);});
@@ -171,12 +174,12 @@ async function refresh() {
     currentProjectId = projId;
     renderProjectSelect();
 
-    let list = { initiatives: [], issues: [] };
+    let list = { issues: [] };
     let loaded = null;
 
     if (projId) {
       list = await api(`/api/projects/${encodeURIComponent(projId)}/issues`);
-      items = list.issues || list.initiatives || [];
+      items = list.issues || [];
       if (issId) {
         try {
           loaded = await api(issuePathFor(projId, issId));
@@ -186,7 +189,7 @@ async function refresh() {
       }
     } else {
       list = await api('/api/initiatives');
-      items = list.initiatives || [];
+      items = (list.initiatives || []).map(item => ({...item, issue: item.issue || item.initiative}));
       if (issId) {
         try {
           loaded = await api(`/api/initiatives/${encodeURIComponent(issId)}`);
@@ -272,7 +275,7 @@ $('#new-form').onsubmit=event=>submitForm(event,async form=>{
   }
   $('#new-dialog').close();
   form.reset();
-  const newId = job.issue_id || job.initiative_id;
+  const newId = job.issue_id || job.id;
   updateHash(currentProjectId, newId);
   toast('実行を開始しました');
   await refresh();

@@ -123,6 +123,8 @@ def handler_for(service, origins, allowed_users=()):
                         project_id, issue_id, action = subparts[0], subparts[2], subparts[3]
                         if action == "stop":
                             self._send(200, service.stop_issue(project_id, issue_id))
+                        elif action == "configure":
+                            self._send(200, service.configure_issue(project_id, issue_id, data))
                         else:
                             self._send(202, service.act_issue(project_id, issue_id, action, data))
                     else:

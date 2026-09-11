@@ -266,11 +266,11 @@ def _show_project(p_store: ProjectStore) -> str:
 def _show(store: IssueStore | WorkStore) -> str:
     report = read_pipeline(store.root, getattr(store, "issue_id", getattr(store, "initiative_id", "")), include_evidence=False)
     state = report["state"]
-    initiative = report.get("issue") or report.get("initiative", {})
+    issue = report.get("issue", {})
     lines = [
-        f"Initiative: {initiative.get('id', '')}",
+        f"Issue: {issue.get('id', '')}",
         f"Status: {state['state']}",
-        f"Goal: {initiative.get('goal', '')}",
+        f"Goal: {issue.get('goal', '')}",
     ]
     phases = report["phases"]
     if state["current_phase"]:

@@ -172,7 +172,6 @@ class IssueStore(JsonStore):
         for directory in ("phases", "runs", "feedback", "evidence"):
             (self.path / directory).mkdir(parents=True, exist_ok=True)
         self.write_json("issue.json", issue.as_dict())
-        self.write_json("initiative.json", issue.as_dict())
         for phase in phases:
             self.save_phase(phase)
         phases[0].status = "running"

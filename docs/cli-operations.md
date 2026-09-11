@@ -84,7 +84,7 @@ dev-pipeline issue run my-service 0001-login --until-ready
 
 ## 3. レガシー案件運用 (`dev-pipeline init`)
 
-従来の単一案件（Initiative）コマンドも下位互換性のため維持されています。
+プロジェクト階層を使用しない単一Issueコマンド（`dev-pipeline init`）も下位互換性のため維持されています。
 
 ### 自然言語からフェーズを計画する
 4. AIレビュー

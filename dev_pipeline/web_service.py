@@ -592,6 +592,29 @@ class WebService:
             }
             return self._enqueue_issue(project_id, issue_id, action, request_id, config, extra)
 
+    def configure_issue(self, project_id, issue_id, data):
+        with self.lock:
+            self.issue_detail(project_id, issue_id)
+            full_key = f"{project_id}/{issue_id}"
+            self._idle(full_key)
+            agent = text_field(data, "agent", 30, True)
+            if agent not in AGENTS:
+                raise ValueError("対応していないエージェントです")
+            repository = text_field(data, "repository", 4096, True)
+            path = Path(repository).expanduser().resolve()
+            if not path.is_dir():
+                raise ValueError("リポジトリのディレクトリが存在しません")
+            p_store = ProjectStore(self.work_dir, project_id)
+            if p_store.exists():
+                proj = p_store.load_project()
+                proj.agent = agent
+                p_store.save_project(proj)
+            config = self._config(project_id).copy()
+            config.update(agent=agent, repository=str(path))
+            self.configs[project_id] = config
+            self.store.write_json("settings.json", self.configs)
+            return config
+
     def stop_issue(self, project_id, issue_id):
         with self.lock:
             job = self._latest(f"{project_id}/{issue_id}")

@@ -122,9 +122,7 @@ class PipelineState:
         return state
 
     def as_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        d["initiative_id"] = self.issue_id
-        return d
+        return asdict(self)
 
     def revision(self) -> str:
         """Identify exactly the state a human inspected before making a decision."""
