@@ -53,7 +53,7 @@ class ProjectIssueTests(unittest.TestCase):
 
         issue_store_1 = project_store.issue_store("ISS-001")
         self.assertFalse(issue_store_1.exists())
-        issue_1 = Issue("ISS-001", "Add feature A", ["Req 1"], [], ["phase-01"])
+        issue_1 = Issue("ISS-001", "Add feature A", ["phase-01"])
         phase_1 = Phase("phase-01", 1, "Goal 1", ["all"], ["done"])
         issue_store_1.create(issue_1, [phase_1])
         self.assertEqual(issue_1.id, "ISS-001")
@@ -66,7 +66,7 @@ class ProjectIssueTests(unittest.TestCase):
 
         # Second issue
         issue_store_2 = project_store.issue_store("ISS-002")
-        issue_2 = Issue("ISS-002", "Add feature B", [], [], ["phase-01"])
+        issue_2 = Issue("ISS-002", "Add feature B", ["phase-01"])
         phase_2 = Phase("phase-01", 1, "Goal 2", ["all"], ["done"])
         issue_store_2.create(issue_2, [phase_2])
         self.assertEqual(project_store.list_issue_ids(), ["ISS-001", "ISS-002"])
@@ -94,7 +94,7 @@ class ProjectIssueTests(unittest.TestCase):
             "issue", "create",
             "my-project",
             "--id", "ISS-1",
-            "--goal", "Build auth",
+            "--request", "Build auth",
             "--phase-file", str(phase_file),
             "--plan-only",
         ])
@@ -119,7 +119,7 @@ class ProjectIssueTests(unittest.TestCase):
         # Issue 1: complete to RESOLVED
         issue_store_1 = project_store.issue_store("ISS-001")
         phases_1 = [{"goal": "Step 1", "scope": ["all"], "acceptance_criteria": ["done"]}]
-        Pipeline.initialize(issue_store_1, "Goal 1", ["Req 1"], [], phases_1)
+        Pipeline.initialize(issue_store_1, "Goal 1", phases_1)
 
         # Run pipeline 1 until acceptance
         agent_1 = FakeAgent([
@@ -135,7 +135,7 @@ class ProjectIssueTests(unittest.TestCase):
         # Issue 2: initialize and check prompt context
         issue_store_2 = project_store.issue_store("ISS-002")
         phases_2 = [{"goal": "Step 2", "scope": ["all"], "acceptance_criteria": ["done"]}]
-        Pipeline.initialize(issue_store_2, "Goal 2", ["Req 2"], [], phases_2)
+        Pipeline.initialize(issue_store_2, "Goal 2", phases_2)
 
         # Pipeline.run for Issue 2 will build run prompt including resolved issues
         agent_2 = FakeAgent([
@@ -175,6 +175,15 @@ class ProjectIssueTests(unittest.TestCase):
                 if det["job"]["status"] not in ("queued", "running", "stopping"):
                     break
                 time.sleep(0.05)
+
+            # Create issue with long free-text (over 100 chars) and auto-generated ID
+            long_text = "Crypto-naut Phase 2 突合検証パイプラインの簡素化改修。\n要件: 1秒スナップショット基準。\n制約: 取引規模はレバレッジ込み数百万円程度。" * 3
+            long_job = svc.create_issue("web-proj", {"request": long_text, "request_id": "req-long"})
+            self.assertTrue(long_job["issue_id"])
+            self.assertNotEqual(long_job["issue_id"], "ISS-100")
+            long_detail = svc.issue_detail("web-proj", long_job["issue_id"])
+            self.assertEqual(long_detail["issue"]["id"], long_job["issue_id"])
+            svc.stop_issue("web-proj", long_job["issue_id"])
 
             new_conf = svc.configure_issue("web-proj", "ISS-100", {"agent": "codex", "repository": detail["config"]["repository"]})
             self.assertEqual(new_conf["agent"], "codex")

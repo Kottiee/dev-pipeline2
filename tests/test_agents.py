@@ -70,7 +70,7 @@ class AdapterSelectionTests(unittest.TestCase):
         self.assertEqual(["--session", "session-1"], args[-2:])
 
     def test_registered_agent_completes_cli_lifecycle_without_concrete_base_class(self):
-        plan = {"goal": "ship", "requirements": ["works"], "constraints": [], "phases": [
+        plan = {"description": "ship", "phases": [
             {"goal": "usable outcome", "scope": ["feature"], "acceptance_criteria": ["works"]},
         ]}
         replies = iter([plan,
@@ -108,7 +108,7 @@ class AdapterSelectionTests(unittest.TestCase):
         class RecordingAgent:
             def execute(self, prompt, repository):
                 calls.append(repository)
-                data = {"goal": "ship", "requirements": ["works"], "constraints": [],
+                data = {"description": "ship",
                         "phases": [{"goal": "usable outcome", "scope": ["feature"],
                                     "acceptance_criteria": ["works"]}]}
                 return AgentResult(data, json.dumps(data), "")
@@ -134,7 +134,7 @@ class AdapterSelectionTests(unittest.TestCase):
             class RecordingAgent:
                 def execute(self, prompt, repository):
                     calls.append(repository)
-                    return AgentResult({"goal": "g", "requirements": [], "constraints": [],
+                    return AgentResult({"description": "g",
                                         "phases": [{"goal": "o", "scope": ["s"],
                                                     "acceptance_criteria": ["w"]}]}, "{}", "")
 
@@ -147,7 +147,7 @@ class AdapterSelectionTests(unittest.TestCase):
 
     def test_init_automatically_continues_until_human_check(self):
         replies = iter([
-            {"goal": "ship", "requirements": ["works"], "constraints": [],
+            {"description": "ship",
              "phases": [{"goal": "usable outcome", "scope": ["feature"],
                          "acceptance_criteria": ["works"]}]},
             {"result": "GOAL_REACHED", "completed": ["feature"], "remaining": [],

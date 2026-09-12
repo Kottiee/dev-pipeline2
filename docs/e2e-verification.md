@@ -79,9 +79,7 @@ python3 -m dev_pipeline.cli --work-dir "$E2E_WORK" project show calc-app
 python3 -m dev_pipeline.cli --work-dir "$E2E_WORK" \
   issue create calc-app \
   --id 0001-basic-math \
-  --request "簡単な計算モジュール calc.py と単体テスト test_calc.py を作成してください。加算 add(a, b) と減算 subtract(a, b) を提供し、python3 -m unittest で全テストが通るようにしてください。" \
-  --requirement "calc.py に add(a, b) と subtract(a, b) 関数があること" \
-  --requirement "test_calc.py に unittest を用いたテストケースがあること"
+  --request "簡単な計算モジュール calc.py と単体テスト test_calc.py を作成してください。加算 add(a, b) と減算 subtract(a, b) を提供し、python3 -m unittest で全テストが通るようにしてください。"
 ```
 
 > **⚠️ 注意（迷い防止）**:
@@ -139,9 +137,7 @@ python3 -m dev_pipeline.cli --work-dir "$E2E_WORK" issue status calc-app 0001-ba
 python3 -m dev_pipeline.cli --work-dir "$E2E_WORK" \
   issue create calc-app \
   --id 0002-multiply \
-  --request "既存の calc.py に乗算 multiply(a, b) 関数を追加してください。既存のテストを壊さずに test_calc.py に乗算のテストも追加してください。" \
-  --requirement "既存の add, subtract 関数がそのまま動作すること" \
-  --requirement "multiply(a, b) が正常に計算できること"
+  --request "既存の calc.py に乗算 multiply(a, b) 関数を追加してください。既存のテストを壊さずに test_calc.py に乗算のテストも追加してください。"
 ```
 
 - **目安所要時間**: 1〜3分

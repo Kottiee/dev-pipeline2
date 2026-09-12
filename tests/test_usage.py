@@ -182,7 +182,7 @@ class UsagePersistenceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.store = WorkStore(self.root / "work", "INIT-001")
-        Pipeline.initialize(self.store, "ship", ["works"], [], PHASES)
+        Pipeline.initialize(self.store, "ship", PHASES)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -233,7 +233,7 @@ class UsagePipelineTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.store = WorkStore(self.root / "work", "INIT-001")
-        Pipeline.initialize(self.store, "ship", ["works"], [], PHASES)
+        Pipeline.initialize(self.store, "ship", PHASES)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -314,12 +314,11 @@ class UsagePipelineTests(unittest.TestCase):
         self.assertIn("Issue: INIT-001", shown)
         self.assertIn("Token usage: 3,234 total (input 1,234, output 2,000, cached 0, reasoning 0)", shown)
         quiet = WorkStore(self.root / "work", "QUIET-001")
-        Pipeline.initialize(quiet, "quiet", [], [], PHASES)
+        Pipeline.initialize(quiet, "quiet", PHASES)
         self.assertIn("Token usage: unavailable", _show(quiet))
 
     def test_init_records_planner_usage(self):
-        plan = {"goal": "ship", "requirements": ["works"], "constraints": [],
-                "phases": PHASES}
+        plan = {"description": "ship", "phases": PHASES}
         stdout = codex_output(codex_line(input_tokens=50, output_tokens=25))
         with patch("dev_pipeline.agents.codex.CodexAgent.execute",
                    return_value=AgentResult(plan, stdout, "")) as execute, \

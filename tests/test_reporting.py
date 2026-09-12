@@ -25,7 +25,7 @@ class ReportingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.work_dir = Path(self.temp.name) / "work"
         self.store = WorkStore(self.work_dir, "TEST-1")
-        Pipeline.initialize(self.store, "完成させる", ["正しく動く"], [], PHASES)
+        Pipeline.initialize(self.store, "完成させる", PHASES)
 
     def tearDown(self):
         self.temp.cleanup()

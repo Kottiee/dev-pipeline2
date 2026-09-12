@@ -68,7 +68,7 @@ class AllocationPersistenceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = WorkStore(Path(self.temp.name) / "work", "INIT-001")
-        Pipeline.initialize(self.store, "ship", [], [], PHASES)
+        Pipeline.initialize(self.store, "ship", PHASES)
 
     def tearDown(self):
         self.temp.cleanup()

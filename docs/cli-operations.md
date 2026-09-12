@@ -62,8 +62,7 @@ dev-pipeline project show my-service
 # Issueの作成と初期Run
 dev-pipeline issue create my-service \
   --id 0001-login \
-  --request "ログインAPIとセッション管理を実装する" \
-  --requirement "POST /login でトークンを発行"
+  --request "ログインAPIとセッション管理を実装する"
 
 # 状態確認
 dev-pipeline issue status my-service 0001-login
@@ -121,8 +120,7 @@ AIによる計画を省き、再現可能なフェーズ定義を渡せます。
 ```bash
 dev-pipeline init \
   --id INIT-004 \
-  --goal "タスク管理アプリを完成させる" \
-  --requirement "タスクを登録・完了できる" \
+  --request "タスク管理アプリを完成させる" \
   --phase-file examples/phases.json
 ```
 

@@ -69,8 +69,7 @@ dev-pipeline project show my-app
 # 新規Issueの作成 (自動計画・初期Run開始)
 dev-pipeline issue create my-app \
   --id 0001-user-auth \
-  --request "ユーザー認証機能を追加する" \
-  --requirement "登録とログインができる"
+  --request "ユーザー認証機能を追加する"
 
 # 状態確認・承認
 dev-pipeline issue status my-app 0001-user-auth

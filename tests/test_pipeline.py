@@ -58,7 +58,7 @@ class PipelineTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.store = WorkStore(self.root / "work", "INIT-001")
-        Pipeline.initialize(self.store, "ship", ["works"], [], PHASES)
+        Pipeline.initialize(self.store, "ship", PHASES)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -75,7 +75,7 @@ class PipelineTests(unittest.TestCase):
         repo.mkdir(parents=True)
         source = repo / "existing.txt"
         source.write_text("keep this", encoding="utf-8")
-        plan = {"goal": "ship", "requirements": ["works"], "constraints": [], "phases": PHASES}
+        plan = {"description": "ship", "phases": PHASES}
         with patch("dev_pipeline.agents.codex.CodexAgent.execute",
                    return_value=AgentResult(plan, json.dumps(plan), "")) as execute, \
              patch("dev_pipeline.cli.collect_agent_allocation", return_value=None):
@@ -91,14 +91,14 @@ class PipelineTests(unittest.TestCase):
     def test_initialize_does_not_overwrite_existing_issue(self):
         before = self.store.read_json("issue.json")
         with self.assertRaises(FileExistsError):
-            Pipeline.initialize(self.store, "replacement", [], [], PHASES)
+            Pipeline.initialize(self.store, "replacement", PHASES)
         self.assertEqual(before, self.store.read_json("issue.json"))
 
     def test_initialize_does_not_overwrite_partial_metadata(self):
         store = WorkStore(self.root / "work", "PARTIAL-001")
         (store.path / "phases").mkdir(parents=True)
         with self.assertRaises(FileExistsError):
-            Pipeline.initialize(store, "ship", [], [], PHASES)
+            Pipeline.initialize(store, "ship", PHASES)
         self.assertFalse((store.path / "issue.json").exists())
 
     def test_continue_writes_checkpoint(self):
@@ -144,7 +144,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual("REQUEST_CHANGES", summary["recommendation"])
         self.assertEqual([1], summary["items"][0]["finding_ids"])
         self.assertIn('"id": 1', agent.prompts[1])
-        self.assertIn("Issue goal: ship", agent.prompts[1])
+        self.assertIn("Issue description: ship", agent.prompts[1])
 
     def test_summary_failure_does_not_block_passed_review_or_approval(self):
         agent = FakeAgent(
@@ -292,7 +292,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_stored_checks_are_used_when_run_omits_checks(self):
         store = WorkStore(self.root / "work", "STORED-001")
-        Pipeline.initialize(store, "ship", ["works"], [], PHASES,
+        Pipeline.initialize(store, "ship", PHASES,
                             checks=[("test", "python -c 'print(1)'")])
         agent = FakeAgent([
             {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
@@ -341,7 +341,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_verify_uses_stored_checks_when_given_empty(self):
         store = WorkStore(self.root / "work", "VERIFY-001")
-        Pipeline.initialize(store, "ship", ["works"], [], PHASES,
+        Pipeline.initialize(store, "ship", PHASES,
                             checks=[("test", "python -c 'print(1)'")])
         pipeline = Pipeline(store, self.root, FakeAgent([]))
         self.assertTrue(pipeline.verify([]))
