@@ -11,22 +11,20 @@ from dev_pipeline.prompts import DEFAULT_PROMPTS_DIR, render_prompt
 
 class PromptRenderingTests(unittest.TestCase):
     def test_renders_planner_without_leftover_placeholders(self):
-        prompt = render_prompt("planner", request="build a tool", requirement="['a']",
-                               constraint="['b']", resolved_issues="none")
+        prompt = render_prompt("planner", request="build a tool", resolved_issues="none")
         self.assertIn("Request: build a tool", prompt)
-        self.assertIn("Additional requirements: ['a']", prompt)
-        self.assertIn('"goal":"..."', prompt)
+        self.assertIn('"description":"..."', prompt)
         self.assertNotIn("$", prompt)
 
     def test_run_and_review_share_context_style(self):
-        run = render_prompt("run", repository="/repo", goal="g", requirements="['r']",
-                            constraints="[]", resolved_issues="none", phase_goal="pg", scope="['s']",
+        run = render_prompt("run", repository="/repo", description="g",
+                            resolved_issues="none", phase_goal="pg", scope="['s']",
                             acceptance_criteria="['c']", feedback="none",
                             accepted_phases="[]", current_run="1",
                             checks="[('t', 'pytest')]", context="none",
                             manifest_file="devpipeline-tests.json")
-        review = render_prompt("review", repository="/repo", goal="g",
-                               requirements="['r']", constraints="[]", resolved_issues="none", phase_goal="pg",
+        review = render_prompt("review", repository="/repo", description="g",
+                               resolved_issues="none", phase_goal="pg",
                                scope="['s']", acceptance_criteria="['c']", context="none",
                                manifest_file="devpipeline-tests.json")
         self.assertIn("Work directly in repository: /repo", run)
@@ -41,7 +39,7 @@ class PromptRenderingTests(unittest.TestCase):
 
     def test_review_summary_requests_business_language_and_finding_links(self):
         summary = render_prompt(
-            "review-summary", goal="ship", requirements='["works"]',
+            "review-summary", description="ship",
             phase_goal="checkout", acceptance_criteria='["can pay"]',
             review_result="FINDINGS",
             findings='[{"id": 1, "description": "timeout"}]',

@@ -53,9 +53,7 @@
   <dialog id="new-dialog">
     <form id="new-form">
       <div class="dialog-heading"><div><p class="eyebrow">NEW ISSUE</p><h2>新しいIssue</h2></div><button type="button" class="close" data-close aria-label="閉じる">×</button></div>
-      <label>何を作りますか？<textarea name="request" rows="5" required maxlength="20000" placeholder="目的、実現したいことを入力してください"></textarea></label>
-      <label>要件 <span class="optional">任意・1行に1つ</span><textarea name="requirements" rows="2" maxlength="20000" placeholder="必要な機能や満たしたい条件"></textarea></label>
-      <label>制約 <span class="optional">任意・1行に1つ</span><textarea name="constraints" rows="2" maxlength="20000" placeholder="技術、データ保存先、変更できない範囲など"></textarea></label>
+      <label>何を作りますか？<textarea name="request" rows="8" required maxlength="100000" placeholder="目的、要件、制約をまとめて自由に入力してください"></textarea></label>
       <details><summary>実行設定</summary><label>エージェント<select name="agent" class="agent-options"></select></label><label>Issue ID <span class="optional">空欄なら自動発行 (例: ISS-001)</span><input name="id" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="ISS-001"></label></details>
       <p class="hint">計画の作成後、そのまま実装・検証・レビューを進めます。承認が必要になった時点で停止します。</p>
       <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-close>キャンセル</button><button type="submit" class="button primary">実行を開始</button></div>

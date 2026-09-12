@@ -72,22 +72,37 @@ class Project:
 @dataclass
 class Issue:
     id: str
-    goal: str
-    requirements: list[str]
-    constraints: list[str]
+    description: str
     phase_order: list[str]
     checks: list[tuple[str, str]] = field(default_factory=list)
     created_at: str = field(default_factory=now_iso)
+
+    @property
+    def goal(self) -> str:
+        """Backward-compatible alias used by display helpers."""
+        return self.description
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Issue":
         data = dict(value)
         data["checks"] = _parse_checks(data.get("checks"))
+        # Backward compatibility: merge legacy goal/requirements/constraints
+        if "description" not in data and "goal" in data:
+            parts = [data.pop("goal")]
+            for key in ("requirements", "constraints"):
+                items = data.pop(key, None)
+                if items:
+                    parts.append("\n".join(items) if isinstance(items, list) else str(items))
+            data["description"] = "\n".join(parts)
+        else:
+            data.pop("goal", None)
+            data.pop("requirements", None)
+            data.pop("constraints", None)
         if "created_at" not in data:
             data["created_at"] = now_iso()
         issue = cls(**data)
-        if not issue.goal or not issue.phase_order:
-            raise ValueError("issue goal and at least one phase are required")
+        if not issue.description or not issue.phase_order:
+            raise ValueError("issue description and at least one phase are required")
         return issue
 
     def as_dict(self) -> dict[str, Any]:

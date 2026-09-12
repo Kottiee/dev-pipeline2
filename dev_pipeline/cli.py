@@ -54,26 +54,24 @@ def _repository(store: IssueStore | WorkStore, repo: str | None) -> Path:
 
 
 def _plan(args: argparse.Namespace, agent: Agent, repository: Path,
-          resolved_issues: str = "none") -> tuple[str, list[str], list[str], list[dict], str | None]:
+          resolved_issues: str = "none") -> tuple[str, list[dict], str | None]:
     if getattr(args, "phase_file", None):
         phases = json.loads(Path(args.phase_file).read_text(encoding="utf-8"))
         if not isinstance(phases, list) or not phases:
             raise ValueError("phase file must contain a non-empty JSON array")
-        return args.goal or args.request, getattr(args, "requirement", []), getattr(args, "constraint", []), phases, None
+        return args.request or getattr(args, "goal", None) or "", phases, None
     request = getattr(args, "request", None) or getattr(args, "goal", None)
     if not request:
-        raise ValueError("--request or --goal is required")
+        raise ValueError("--request is required")
     prompt = render_prompt("planner", request=request,
-                           requirement=str(getattr(args, "requirement", [])),
-                           constraint=str(getattr(args, "constraint", [])),
                            resolved_issues=resolved_issues)
     result = agent.execute(prompt, repository)
     data = result.data
-    keys = {"goal", "requirements", "constraints", "phases"}
+    keys = {"description", "phases"}
     if not keys.issubset(data) or not isinstance(data["phases"], list) or not data["phases"]:
         raise ValueError("planner returned an invalid issue")
     planner_output = f"{result.stdout}\n{result.stderr}".strip() if result.stderr.strip() else result.stdout
-    return data["goal"], data["requirements"], data["constraints"], data["phases"], planner_output
+    return data["description"], data["phases"], planner_output
 
 
 def _project_resolved_context(p_store: ProjectStore) -> str:
@@ -84,7 +82,7 @@ def _project_resolved_context(p_store: ProjectStore) -> str:
             st = istore.load_state()
             if st.state in {"RESOLVED", "COMPLETED"}:
                 iss = istore.load_issue()
-                resolved.append(f"- Issue {issue_id}: {iss.goal}")
+                resolved.append(f"- Issue {issue_id}: {iss.description}")
         except Exception:
             pass
     return "\n".join(resolved) if resolved else "none"
@@ -125,10 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     i_create = i_sub.add_parser("create", help="create and start a new issue")
     i_create.add_argument("project_id")
     i_create.add_argument("--id", help="issue identifier (default: auto-generated, e.g. 0001)")
-    i_create.add_argument("--request", help="natural-language human request")
-    i_create.add_argument("--goal", help="goal used with a manually supplied phase file")
-    i_create.add_argument("--requirement", action="append", default=[])
-    i_create.add_argument("--constraint", action="append", default=[])
+    i_create.add_argument("--request", help="natural-language description of what to build")
     i_create.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND",
                           help="register verification checks on the issue")
     i_create.add_argument("--phase-file", help="JSON phase array; skips AI planning")
@@ -184,10 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 3. Legacy top-level commands
     init = sub.add_parser("init", help="legacy plan and start")
     init.add_argument("--id", required=True)
-    init.add_argument("--request", help="natural-language human request")
-    init.add_argument("--goal", help="goal used with a manually supplied phase file")
-    init.add_argument("--requirement", action="append", default=[])
-    init.add_argument("--constraint", action="append", default=[])
+    init.add_argument("--request", help="natural-language description of what to build")
     init.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     init.add_argument("--phase-file", help="JSON phase array")
     init.add_argument("--plan-only", action="store_true")
@@ -227,7 +219,7 @@ def _show_issue(issue_store: IssueStore) -> str:
     lines = [
         f"Issue: {issue.id}",
         f"Status: {state.state}",
-        f"Goal: {issue.goal}",
+        f"Description: {issue.description}",
     ]
     if state.current_phase:
         current = next((p for p in phases if p.id == state.current_phase), None)
@@ -258,7 +250,7 @@ def _show_project(p_store: ProjectStore) -> str:
             istore = p_store.issue_store(i_id)
             state = istore.load_state()
             iss = istore.load_issue()
-            lines.append(f"  {i_id} [{state.state}]: {iss.goal}")
+            lines.append(f"  {i_id} [{state.state}]: {iss.description}")
         except Exception:
             lines.append(f"  {i_id}")
     return "\n".join(lines)
@@ -271,7 +263,7 @@ def _show(store: IssueStore | WorkStore) -> str:
     lines = [
         f"Issue: {issue.get('id', '')}",
         f"Status: {state['state']}",
-        f"Goal: {issue.get('goal', '')}",
+        f"Description: {issue.get('description', '')}",
     ]
     phases = report["phases"]
     if state["current_phase"]:
@@ -368,16 +360,16 @@ def _execute_issue(args: argparse.Namespace, p_store: ProjectStore) -> int:
         subprocess.run(["git", "init", str(repository)], check=False)
 
     if args.subcommand == "create":
-        issue_id = args.id or p_store.next_issue_id(args.request or args.goal or "")
+        issue_id = args.id or p_store.next_issue_id(args.request or "")
         issue_store = p_store.issue_store(issue_id)
         agent_name = args.agent or project.agent or "codex"
         agent_command = args.agent_command or project.agent_command
         agent = create_agent(agent_name, agent_command, log_dir=issue_store.path / "agent-logs")
         agent.token_usage_format = _resolved_token_usage_format(args, agent)
         resolved_context = _project_resolved_context(p_store)
-        goal, requirements, constraints, phases, planner_output = _plan(
+        description, phases, planner_output = _plan(
             args, agent, repository, resolved_issues=resolved_context)
-        Pipeline.initialize(issue_store, goal, requirements, constraints, phases,
+        Pipeline.initialize(issue_store, description, phases,
                             checks=_checks(args.check))
         usage = extract_token_usage(planner_output, agent.token_usage_format)
         allocation = collect_agent_allocation(agent)
@@ -408,7 +400,7 @@ def _execute_issue(args: argparse.Namespace, p_store: ProjectStore) -> int:
                 istore = p_store.issue_store(i_id)
                 st = istore.load_state()
                 iss = istore.load_issue()
-                print(f"{i_id}\t{st.state}\t{iss.goal}")
+                print(f"{i_id}\t{st.state}\t{iss.description}")
             except Exception:
                 print(i_id)
         return 0
@@ -454,8 +446,8 @@ def _execute_legacy(args: argparse.Namespace, store: WorkStore) -> int:
     if args.command == "init":
         agent = _agent(args, custom_store=store)
         agent.token_usage_format = _resolved_token_usage_format(args, agent)
-        goal, requirements, constraints, phases, planner_output = _plan(args, agent, repository)
-        Pipeline.initialize(store, goal, requirements, constraints, phases,
+        description, phases, planner_output = _plan(args, agent, repository)
+        Pipeline.initialize(store, description, phases,
                             checks=_checks(args.check))
         usage = extract_token_usage(planner_output, agent.token_usage_format)
         allocation = collect_agent_allocation(agent)

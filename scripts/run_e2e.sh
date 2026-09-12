@@ -58,9 +58,7 @@ echo -e "${YELLOW}※ LLM is planning, implementing, and reviewing. This usually
 ISSUE_1_OUT=$($PYTHON_CMD -m dev_pipeline.cli --work-dir "$WORK_DIR" \
   issue create "$PROJ_ID" \
   --id 0001-basic-math \
-  --request "簡単な計算モジュール calc.py と単体テスト test_calc.py を作成してください。加算 add(a, b) と減算 subtract(a, b) を提供し、python3 -m unittest で全テストが通るようにしてください。" \
-  --requirement "calc.py に add(a, b) と subtract(a, b) 関数があること" \
-  --requirement "test_calc.py に unittest を用いたテストケースがあること")
+  --request "簡単な計算モジュール calc.py と単体テスト test_calc.py を作成してください。加算 add(a, b) と減算 subtract(a, b) を提供し、python3 -m unittest で全テストが通るようにしてください。")
 
 echo "$ISSUE_1_OUT"
 
@@ -91,9 +89,7 @@ echo -e "${YELLOW}※ LLM is incorporating resolved context from Issue 1 and add
 ISSUE_2_OUT=$($PYTHON_CMD -m dev_pipeline.cli --work-dir "$WORK_DIR" \
   issue create "$PROJ_ID" \
   --id 0002-multiply \
-  --request "既存の calc.py に乗算 multiply(a, b) 関数を追加してください。既存のテストを壊さずに test_calc.py に乗算のテストも追加してください。" \
-  --requirement "既存の add, subtract 関数がそのまま動作すること" \
-  --requirement "multiply(a, b) が正常に計算できること")
+  --request "既存の calc.py に乗算 multiply(a, b) 関数を追加してください。既存のテストを壊さずに test_calc.py に乗算のテストも追加してください。")
 
 echo "$ISSUE_2_OUT"
 

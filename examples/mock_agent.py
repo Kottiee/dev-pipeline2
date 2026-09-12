@@ -38,9 +38,7 @@ def main() -> None:
     # 2. Planner Prompt
     if "turn this human request" in prompt.lower():
         print(json.dumps({
-            "goal": "E2E Verification Goal",
-            "requirements": ["Requirement verified"],
-            "constraints": [],
+            "description": "E2E Verification Goal",
             "phases": [
                 {
                     "goal": "Implement and verify minimum viable changes",

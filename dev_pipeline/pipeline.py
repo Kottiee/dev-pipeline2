@@ -30,14 +30,14 @@ class Pipeline:
 
     @staticmethod
     def initialize(
-        store: IssueStore, goal: str, requirements: list[str], constraints: list[str],
+        store: IssueStore, description: str,
         phase_specs: list[dict[str, Any]],
         checks: list[tuple[str, str]] | None = None,
     ) -> None:
         phases = [Phase(id=f"phase-{index:02d}", sequence=index, **spec)
                   for index, spec in enumerate(phase_specs, 1)]
         issue_id = getattr(store, "issue_id", getattr(store, "initiative_id", ""))
-        issue = Issue(issue_id, goal, requirements, constraints,
+        issue = Issue(issue_id, description,
                       [phase.id for phase in phases],
                       checks=[tuple(check) for check in (checks or [])])
         store.create(issue, phases)
@@ -345,7 +345,7 @@ class Pipeline:
                             phases_summary.append(f"  * Phase {p.id}: {p.goal} (status: {p.status})")
                         except Exception:
                             pass
-                    entry = f"- Issue {other_id}: {iss.goal}"
+                    entry = f"- Issue {other_id}: {iss.description}"
                     if phases_summary:
                         entry += "\n" + "\n".join(phases_summary)
                     resolved.append(entry)
@@ -362,9 +362,7 @@ class Pipeline:
         return render_prompt(
             "run",
             repository=str(self.repository),
-            goal=issue.goal,
-            requirements=str(issue.requirements),
-            constraints=str(issue.constraints),
+            description=issue.description,
             resolved_issues=self._resolved_issues_context(),
             phase_goal=phase.goal,
             scope=str(phase.scope),
@@ -381,9 +379,7 @@ class Pipeline:
         return render_prompt(
             "review",
             repository=str(self.repository),
-            goal=issue.goal,
-            requirements=str(issue.requirements),
-            constraints=str(issue.constraints),
+            description=issue.description,
             resolved_issues=self._resolved_issues_context(),
             phase_goal=phase.goal,
             scope=str(phase.scope),
@@ -402,8 +398,7 @@ class Pipeline:
         ]
         return render_prompt(
             "review-summary",
-            goal=issue.goal,
-            requirements=json.dumps(issue.requirements, ensure_ascii=False),
+            description=issue.description,
             phase_goal=phase.goal,
             acceptance_criteria=json.dumps(phase.acceptance_criteria, ensure_ascii=False),
             review_result=decision,

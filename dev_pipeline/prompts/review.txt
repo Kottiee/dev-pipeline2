@@ -4,9 +4,7 @@ Run verification commands from this repository. If the repository has a test man
 $manifest_file at its root, run the command it declares as part of your review.
 If temporary test inputs are needed, create
 them inside this repository and clean up only those temporary inputs afterwards.
-Issue goal: $goal
-Requirements: $requirements
-Constraints: $constraints
+Issue description: $description
 Previously resolved issues in this project: $resolved_issues
 Phase goal: $phase_goal
 Scope: $scope

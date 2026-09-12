@@ -29,7 +29,7 @@ pathlib.Path('last-prompt.txt').write_text(prompt)
 if pathlib.Path('slow').exists():
     time.sleep(60)
 if prompt.startswith('Turn this human request'):
-    result = {'goal': '集計を作る', 'requirements': ['正しく集計できる'], 'constraints': [],
+    result = {'description': '集計を作る',
               'phases': [{'goal': name, 'scope': ['implementation'], 'acceptance_criteria': ['tests pass']}
                          for name in ['集計の実装', '集計の拡張']]}
 elif prompt.startswith('You are the implementation agent'):

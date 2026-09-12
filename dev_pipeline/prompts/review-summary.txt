@@ -1,8 +1,7 @@
 Create a concise Japanese summary of a completed software review for a business owner.
 This is a separate reporting step. Do not inspect or modify the repository.
 
-Issue goal: $goal
-Requirements: $requirements
+Issue description: $description
 Phase goal: $phase_goal
 Acceptance criteria: $acceptance_criteria
 Review result: $review_result

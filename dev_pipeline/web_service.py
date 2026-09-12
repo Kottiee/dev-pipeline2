@@ -38,7 +38,7 @@ class Conflict(ValueError):
     pass
 
 
-def text_field(data, name, maximum=20000, required=False):
+def text_field(data, name, maximum=100000, required=False):
     value = data.get(name, "")
     if not isinstance(value, str) or len(value) > maximum:
         raise ValueError(f"{name} の形式または長さが不正です")
@@ -160,8 +160,6 @@ class WebService:
             else:
                 repo = default_repository(self.work_dir, initiative_id)
             config = {"request": text_field(data, "request", required=True),
-                      "requirements": text_field(data, "requirements"),
-                      "constraints": text_field(data, "constraints"),
                       "agent": agent, "repository": str(repo), "create_repository": not repository}
             self._idle(initiative_id, str(repo))
             self.configs[initiative_id] = config
@@ -276,10 +274,6 @@ class WebService:
                 if project_id and issue_id:
                     if action == "init":
                         command = base + ["issue", "create", project_id, "--id", issue_id, "--request", config["request"]]
-                        for key, option in (("requirements", "--requirement"), ("constraints", "--constraint")):
-                            for line in config.get(key, "").splitlines():
-                                if line.strip():
-                                    command += [option, line.strip()]
                     elif action == "human-check":
                         command = base + ["issue", "human-check", project_id, issue_id] + extra
                     else:
@@ -293,10 +287,6 @@ class WebService:
                             if code:
                                 raise ValueError("新規リポジトリのGit初期化に失敗しました")
                     command = base + ["init", "--id", initiative_id, "--request", config["request"]]
-                    for key, option in (("requirements", "--requirement"), ("constraints", "--constraint")):
-                        for line in config.get(key, "").splitlines():
-                            if line.strip():
-                                command += [option, line.strip()]
                 elif action == "human-check":
                     command = base + ["human-check", initiative_id] + extra
                 else:
@@ -372,7 +362,7 @@ class WebService:
                 config = self.configs.get(initiative_id)
                 if not config:
                     raise FileNotFoundError("案件が見つかりません")
-                result = {"initiative": {"id": initiative_id, "goal": config.get("request", "初期化中")},
+                result = {"initiative": {"id": initiative_id, "description": config.get("request", "初期化中")},
                           "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
                           "revision": None, "phases": [], "usage": {},
                           "allocation_usage": {}, "actions": available_actions("PLANNING")}
@@ -397,7 +387,7 @@ class WebService:
                     result.append({k: detail[k] for k in
                                    ("initiative", "state", "actions", "job", "phases")})
                 except (OSError, ValueError, TypeError) as error:
-                    result.append({"initiative": {"id": initiative_id, "goal": "状態の読み取りエラー"},
+                    result.append({"initiative": {"id": initiative_id, "description": "状態の読み取りエラー"},
                                    "state": {"state": "FAILED"},
                                    "actions": {"run": False, "human_check": False, "completed": False},
                                    "job": None, "phases": [], "error": str(error)})
@@ -498,7 +488,7 @@ class WebService:
                                     ("issue", "state", "actions", "job", "phases", "project_id")})
                 except Exception as error:
                     results.append({
-                        "issue": {"id": i_id, "goal": "状態の読み取りエラー"},
+                        "issue": {"id": i_id, "description": "状態の読み取りエラー"},
                         "state": {"state": "FAILED"},
                         "actions": {"run": False, "human_check": False, "completed": False},
                         "job": None, "phases": [], "project_id": project_id, "error": str(error)
@@ -516,7 +506,7 @@ class WebService:
                 config = self.configs.get(key, {})
                 result = {
                     "project_id": project_id,
-                    "issue": {"id": issue_id, "goal": config.get("request", "初期化中")},
+                    "issue": {"id": issue_id, "description": config.get("request", "初期化中")},
                     "state": {"state": "PLANNING", "current_phase": None, "current_run": 0},
                     "revision": None, "phases": [], "usage": {},
                     "allocation_usage": {}, "actions": available_actions("PLANNING")
@@ -537,7 +527,7 @@ class WebService:
             p_store = ProjectStore(self.work_dir, project_id)
             if not p_store.exists():
                 raise FileNotFoundError("プロジェクトが見つかりません")
-            issue_id = text_field(data, "id", 128) or p_store.next_issue_id(text_field(data, "request", 100))
+            issue_id = text_field(data, "id", 128) or p_store.next_issue_id(str(data.get("request") or "")[:50])
             full_key = f"{project_id}/{issue_id}"
             for job in self.jobs.values():
                 if job.get("project_id") == project_id and job.get("issue_id") == issue_id and job["request_id"] == request_id:
@@ -546,8 +536,6 @@ class WebService:
             repo = Path(p_config["repository"])
             config = {
                 "request": text_field(data, "request", required=True),
-                "requirements": text_field(data, "requirements"),
-                "constraints": text_field(data, "constraints"),
                 "agent": p_config["agent"],
                 "repository": str(repo),
                 "project_id": project_id,
