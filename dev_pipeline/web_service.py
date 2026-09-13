@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .models import now_iso
 from .notifications import Notifications
+from .preview import PreviewConflict, PreviewManager
 from .reporting import (
     available_actions,
     default_repository,
@@ -75,6 +76,7 @@ class WebService:
                 job.update(status="interrupted", ended_at=now_iso(),
                            error="サービスの中断を検出しました。状態を確認して再開してください。")
         self._save_jobs()
+        self.previews = PreviewManager(self.directory)
         self.notifications = Notifications(self.directory, push_subject)
         self.notifications.start()
 
@@ -96,6 +98,7 @@ class WebService:
             threads = list(self.threads.values())
         for thread in threads:
             thread.join(timeout=7)
+        self.previews.close()
         self.notifications.close()
         self.instance_lock.close()
 
@@ -186,6 +189,7 @@ class WebService:
                 extra = [result, "--expected-revision", revision]
                 if result == "FEEDBACK":
                     extra += ["--feedback", text_field(data, "feedback", required=True)]
+                self._stop_preview_for_pipeline(initiative_id)
             elif action == "run":
                 if not detail["actions"]["run"]:
                     raise Conflict("この状態では実行できません。最新の状態を確認してください")
@@ -252,7 +256,7 @@ class WebService:
     def _signal(process, sig):
         try:
             os.killpg(process.pid, sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
 
     def _execute(self, job_id, config, extra):
@@ -371,7 +375,9 @@ class WebService:
             job = self._latest(initiative_id)
             if not include_evidence:
                 return {**result, "job": job}
-            result.update(job=job, config=self._config(initiative_id),
+            config = self._config(initiative_id)
+            result.update(job=job, config=config,
+                          preview=self.previews.status(initiative_id, Path(config["repository"])),
                           job_log=self._job_log(
                               self.directory / "job-logs" / f"{job['id']}.log") if job else "")
             return result
@@ -518,6 +524,8 @@ class WebService:
                 return {**result, "job": job}
             p_config = self._config(project_id)
             result.update(job=job, config=p_config,
+                          preview=self.previews.status(f"{project_id}/{resolved_id}",
+                                                       Path(p_config["repository"])),
                           job_log=self._job_log(self.directory / "job-logs" / f"{job['id']}.log") if job else "")
             return result
 
@@ -565,6 +573,7 @@ class WebService:
                 extra = [result, "--expected-revision", revision]
                 if result == "FEEDBACK":
                     extra += ["--feedback", text_field(data, "feedback", required=True)]
+                self._stop_preview_for_pipeline(full_key)
             elif action == "run":
                 if not detail["actions"]["run"]:
                     raise Conflict("この状態では実行できません。最新の状態を確認してください")
@@ -624,3 +633,38 @@ class WebService:
         self.threads[job_id] = thread
         thread.start()
         return job.copy()
+
+    def _stop_preview_for_pipeline(self, key):
+        try:
+            self.previews.stop(key, wait=True)
+        except PreviewConflict:
+            pass
+
+    def _preview_context(self, initiative_id, project_id=None):
+        if project_id:
+            detail = self.issue_detail(project_id, initiative_id)
+            key = f"{project_id}/{detail['issue']['id']}"
+        else:
+            detail = self.detail(initiative_id)
+            key = initiative_id
+        return key, Path(detail["config"]["repository"]), detail
+
+    def preview_action(self, initiative_id, action, project_id=None):
+        with self.lock:
+            key, repository, detail = self._preview_context(initiative_id, project_id)
+            if action in {"start", "restart"}:
+                if not detail["actions"]["human_check"]:
+                    raise Conflict("プレビューは承認待ちのIssueで起動できます")
+                if detail.get("job") and detail["job"]["status"] in ACTIVE:
+                    raise Conflict("パイプライン実行中はプレビューを起動できません")
+                try:
+                    return (self.previews.start(key, repository) if action == "start"
+                            else self.previews.restart(key, repository))
+                except PreviewConflict as error:
+                    raise Conflict(str(error)) from error
+            if action == "stop":
+                try:
+                    return self.previews.stop(key)
+                except PreviewConflict as error:
+                    raise Conflict(str(error)) from error
+            raise ValueError("不明なプレビュー操作です")

@@ -94,6 +94,22 @@ PCやスマートフォンのブラウザーで `http://127.0.0.1:8787` を開�
 
 スマートフォンからの接続、Tailscale、通知は[Web UI・スマートフォン操作ガイド](docs/mobile-operations.md)、macOSでの常時起動は[launchd常時起動ガイド](docs/launchd.md)を参照してください。
 
+### Web/PWA成果物をプレビューする
+
+成果物リポジトリのルートに `.dev-pipeline-preview.json` を置くと、承認待ちのIssueから一時プレビューを起動できます。
+
+```json
+{
+  "type": "web",
+  "command": ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "{port}"],
+  "health_path": "/"
+}
+```
+
+`command` はシェルを介さず実行されます。空いているポート番号は、各要素内の `{port}`、`PORT`、`DEV_PIPELINE_PREVIEW_PORT` に渡されます。別の環境変数を使うツールでは `"port_env": "ツールの変数名"` を指定できます。固定ポートが必要な場合だけ `"port": 3000`、起動に時間がかかる場合は `"startup_timeout": 60`（最大120秒）を指定します。
+
+パス配下で中継するため、アプリのアセット・API URLには相対URLを使ってください。必要な場合は `DEV_PIPELINE_PREVIEW_BASE_PATH` をアプリ側のbase pathへ設定します。設定ファイルは任意コマンドを実行できるため、信頼できる変更だけを承認してください。
+
 ## 保存先
 
 ```text

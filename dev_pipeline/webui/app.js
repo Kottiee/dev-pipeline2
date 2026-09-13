@@ -125,10 +125,26 @@ function evidenceView() {
   const summary = ev.review_summary;
   return head + businessReviewSummary(summary) + technicalFindings(result,!summary || summary.status !== 'SUCCESS') + '<p class="hint">保存された最新のレビュー結果です。修正中は前回の結果が表示されます。</p>';
 }
+function previewCard() {
+  const preview = detail.preview;
+  if (!preview) return '';
+  const active = ['starting','running','stopping'].includes(preview.status);
+  const labels = {unsupported:'未設定',stopped:'停止中',starting:'起動中',running:'起動済み',stopping:'停止中',failed:'起動失敗'};
+  const kinds = {running:'success',starting:'running',stopping:'running',failed:'error'};
+  let body = '';
+  if (!preview.configured) {
+    body = `<p class="muted">確認方法が未設定です。成果物リポジトリに <code>${esc(preview.config_file)}</code> を追加すると利用できます。</p>`;
+  } else {
+    body = preview.error ? `<p class="notice error">${esc(preview.error)}</p>` : `<p class="muted">成果物を一時起動し、この端末の新しいタブで確認します。</p>`;
+    body += `<div class="preview-actions">${preview.status==='running' ? `<a class="button primary" href="${esc(preview.url)}" target="_blank" rel="noopener noreferrer">スマホで動作確認</a><button class="button" id="preview-restart" ${submitting?'disabled':''}>再起動</button>` : ''}${!active && detail.actions.human_check ? `<button class="button primary" id="preview-start" ${submitting?'disabled':''}>プレビュー開始</button>` : ''}${active ? `<button class="button danger" id="preview-stop" ${preview.status==='stopping'||submitting?'disabled':''}>プレビュー停止</button>` : ''}</div>`;
+    if (preview.log) body += `<details><summary>プレビュー起動ログ</summary><pre class="log">${esc(preview.log)}</pre></details>`;
+  }
+  return `<section class="preview-card"><div class="preview-heading"><div><p class="eyebrow">WEB / PWA PREVIEW</p><h3>成果物の動作確認</h3></div>${badge(labels[preview.status] || preview.status,kinds[preview.status] || '')}</div>${body}</section>`;
+}
 function overviewView() {
   const current = detail.phases.find(p => p.id === detail.state.current_phase);
   const iss = detail.issue;
-  return `${current ? `<section class="section"><h3>このフェーズの受け入れ条件</h3><ul>${current.acceptance_criteria.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></section>`:''}
+  return `${previewCard()}${current ? `<section class="section"><h3>このフェーズの受け入れ条件</h3><ul>${current.acceptance_criteria.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></section>`:''}
   <section class="section"><h3>フェーズ構成</h3><div class="phase-list">${detail.phases.map((p,i)=>`<div class="phase-item"><span class="phase-index">${String(i+1).padStart(2,'0')}</span><p>${esc(p.goal)}</p>${badge(phases[p.status],p.status==='accepted'?'success':p.status==='awaiting_human_check'?'waiting':'')}</div>`).join('') || '<p class="muted">要求からフェーズを計画しています。</p>'}</div></section>
   ${detail.checkpoint ? `<details><summary>直近Runのチェックポイント</summary><pre class="log">${esc(detail.checkpoint)}</pre></details>`:''}
   <details><summary>依頼の詳細</summary><div class="section"><p class="prose">${esc(iss.description || detail.config.request || '指定なし')}</p></div></details>
@@ -167,6 +183,9 @@ function renderDetail(force = false) {
   if ($('#accept')) $('#accept').onclick = () => action('human-check',{result:'ACCEPT',revision:detail.revision});
   if ($('#feedback-open')) $('#feedback-open').onclick = () => {decisionSnapshot={id:selected,revision:detail.revision};$('#feedback-phase').textContent=detail.state.current_phase+' · '+current.goal;openDialog('feedback-dialog');};
   if ($('#stop-open')) $('#stop-open').onclick = () => {decisionSnapshot={id:selected};openDialog('stop-dialog');};
+  if ($('#preview-start')) $('#preview-start').onclick = () => previewAction('start');
+  if ($('#preview-stop')) $('#preview-stop').onclick = () => previewAction('stop');
+  if ($('#preview-restart')) $('#preview-restart').onclick = () => previewAction('restart');
   if ($('#settings-form')) $('#settings-form').onsubmit = event => submitForm(event, async form => {await api(issuePathFor(currentProjectId, selected)+'/configure',Object.fromEntries(new FormData(form)));toast('設定を保存しました');await refresh();});
 }
 
@@ -235,6 +254,21 @@ async function action(name, data={}, id=selected) {
     toast(name==='human-check'?'判断を受け付けました':'実行を受け付けました');
     await refresh();
   } catch(error){
+    toast(error.message,true);
+    await refresh();
+  } finally {
+    submitting=false;renderDetail(true);
+  }
+}
+
+async function previewAction(name) {
+  if (submitting) return;
+  submitting=true;renderDetail(true);
+  try {
+    await api(issuePathFor(currentProjectId, selected)+'/preview-'+name,{});
+    toast(name==='stop'?'プレビューを停止しています':name==='restart'?'プレビューを再起動しています':'プレビューを起動しています');
+    await refresh();
+  } catch(error) {
     toast(error.message,true);
     await refresh();
   } finally {

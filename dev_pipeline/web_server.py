@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import http.client
 import json
 import mimetypes
 import os
@@ -22,6 +23,7 @@ STATIC = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css",
 def handler_for(service, origins, allowed_users=()):
     csrf = secrets.token_urlsafe(32)
     hosts = {urlparse(origin).netloc for origin in origins}
+    schemes = {urlparse(origin).netloc: urlparse(origin).scheme for origin in origins}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "DevPipeline"
@@ -59,12 +61,126 @@ def handler_for(service, origins, allowed_users=()):
                 return False
             return True
 
+        def _preview_parts(self):
+            path = urlparse(self.path).path
+            if not path.startswith("/preview/"):
+                return None
+            parts = path.removeprefix("/preview/").split("/", 1)
+            if len(parts) != 2 or not parts[0]:
+                return None
+            return parts[0], "/" + parts[1]
+
+        def _proxy_preview(self):
+            parts = self._preview_parts()
+            if not parts:
+                self._send(404, {"error": "プレビューが見つかりません"})
+                return
+            token, upstream_path = parts
+            target = service.previews.target(token)
+            if not target:
+                self._send(404, {"error": "プレビューは停止しています"})
+                return
+            port, status = target
+            if status == "starting":
+                self._send(503, {"error": "プレビューを起動しています"})
+                return
+            if self.command == "OPTIONS":
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "null")
+                self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+                requested_headers = self.headers.get("Access-Control-Request-Headers")
+                if requested_headers:
+                    self.send_header("Access-Control-Allow-Headers", requested_headers)
+                self.send_header("Access-Control-Max-Age", "600")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            query = urlparse(self.path).query
+            if query:
+                upstream_path += "?" + query
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send(400, {"error": "プレビューへの入力サイズが不正です"})
+                return
+            if size < 0 or size > 10 * 1024 * 1024:
+                self._send(413, {"error": "プレビューへの入力が大きすぎます"})
+                return
+            body = self.rfile.read(size) if size else None
+            forwarded = {}
+            for name in ("Accept", "Accept-Encoding", "Accept-Language", "Content-Type",
+                         "If-Modified-Since", "If-None-Match", "Range", "User-Agent"):
+                if self.headers.get(name):
+                    forwarded[name] = self.headers[name]
+            forwarded["Host"] = f"127.0.0.1:{port}"
+            if self.headers.get("Origin"):
+                forwarded["Origin"] = f"http://127.0.0.1:{port}"
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            try:
+                connection.request(self.command, upstream_path, body=body, headers=forwarded)
+                response = connection.getresponse()
+                payload = response.read(50 * 1024 * 1024 + 1)
+                if len(payload) > 50 * 1024 * 1024:
+                    self._send(502, {"error": "プレビューの応答が大きすぎます"})
+                    return
+                self.send_response(response.status)
+                blocked = {"access-control-allow-headers", "access-control-allow-methods",
+                           "access-control-allow-origin", "connection", "content-length",
+                           "content-security-policy", "keep-alive",
+                           "proxy-authenticate", "proxy-authorization", "service-worker-allowed",
+                           "set-cookie", "te", "trailer", "transfer-encoding", "upgrade", "x-frame-options"}
+                for name, value in response.getheaders():
+                    if name.lower() in blocked:
+                        continue
+                    if name.lower() == "location":
+                        location = urlparse(value)
+                        if value.startswith("/"):
+                            value = f"/preview/{token}{value}"
+                        elif location.scheme in {"http", "https"} and location.netloc in {
+                                f"127.0.0.1:{port}", f"localhost:{port}"}:
+                            value = f"/preview/{token}{location.path or '/'}"
+                            if location.query:
+                                value += "?" + location.query
+                    self.send_header(name, value)
+                host = self.headers.get("Host")
+                proto = schemes.get(host, "http")
+                prefix = f"{proto}://{host}/preview/{token}/"
+                websocket = ("wss" if proto == "https" else "ws") + f"://{host}/preview/{token}/"
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "null")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Security-Policy",
+                                 "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads; "
+                                 f"default-src {prefix} data: blob: 'unsafe-inline' 'unsafe-eval'; "
+                                 f"connect-src {prefix} {websocket} data: blob:; "
+                                 f"worker-src {prefix} blob:; form-action {prefix}; "
+                                 f"frame-ancestors 'none'; base-uri {prefix}")
+                self.end_headers()
+                self.wfile.write(payload)
+            except (OSError, http.client.HTTPException):
+                self._send(502, {"error": "プレビューへ接続できません"})
+            finally:
+                connection.close()
+
+        def _preview_request(self):
+            if not self._preview_parts():
+                return False
+            if self._authorize():
+                self._proxy_preview()
+            return True
+
         def do_GET(self):
             if not self._authorize():
                 return
             path = urlparse(self.path).path
             try:
-                if path in STATIC:
+                if self._preview_parts():
+                    self._proxy_preview()
+                elif path in STATIC:
                     name = STATIC[path]
                     data = (Path(__file__).parent / "webui" / name).read_bytes()
                     mime = {".js": "text/javascript", ".webmanifest": "application/manifest+json"}.get(
@@ -99,6 +215,8 @@ def handler_for(service, origins, allowed_users=()):
                 self._send(400, {"error": str(error)})
 
         def do_POST(self):
+            if self._preview_request():
+                return
             if not self._authorize(mutation=True):
                 return
             try:
@@ -125,6 +243,9 @@ def handler_for(service, origins, allowed_users=()):
                             self._send(200, service.stop_issue(project_id, issue_id))
                         elif action == "configure":
                             self._send(200, service.configure_issue(project_id, issue_id, data))
+                        elif action in {"preview-start", "preview-stop", "preview-restart"}:
+                            result = service.preview_action(issue_id, action.removeprefix("preview-"), project_id)
+                            self._send(202 if action != "preview-stop" else 200, result)
                         else:
                             self._send(202, service.act_issue(project_id, issue_id, action, data))
                     else:
@@ -152,6 +273,9 @@ def handler_for(service, origins, allowed_users=()):
                         self._send(200, service.stop(initiative_id))
                     elif action == "configure":
                         self._send(200, service.configure(initiative_id, data))
+                    elif action in {"preview-start", "preview-stop", "preview-restart"}:
+                        result = service.preview_action(initiative_id, action.removeprefix("preview-"))
+                        self._send(202 if action != "preview-stop" else 200, result)
                     else:
                         self._send(202, service.act(initiative_id, action, data))
                 else:
@@ -162,6 +286,22 @@ def handler_for(service, origins, allowed_users=()):
                 self._send(404, {"error": str(error)})
             except (ValueError, OSError, TypeError) as error:
                 self._send(400, {"error": str(error)})
+
+        def do_PUT(self):
+            if not self._preview_request():
+                self._send(404, {"error": "見つかりません"})
+
+        def do_PATCH(self):
+            if not self._preview_request():
+                self._send(404, {"error": "見つかりません"})
+
+        def do_DELETE(self):
+            if not self._preview_request():
+                self._send(404, {"error": "見つかりません"})
+
+        def do_OPTIONS(self):
+            if not self._preview_request():
+                self._send(404, {"error": "見つかりません"})
 
     return Handler
 

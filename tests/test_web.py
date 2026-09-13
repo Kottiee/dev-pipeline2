@@ -153,6 +153,35 @@ class WebServiceTests(unittest.TestCase):
                 'ACCEPT','--expected-revision','old']))
         self.assertEqual(detail['revision'], self.service.detail('REV')['revision'])
 
+    def test_preview_is_available_only_while_waiting_and_stops_before_approval(self):
+        repository = self.root / 'preview-repo'; repository.mkdir()
+        job = self.service.create({'id':'PREVIEW', 'request_id':'preview-create',
+                                   'request':'preview', 'repository':str(repository)})
+        detail = self.wait_job(job)
+        with self.assertRaises(ValueError):
+            # It is waiting now, but no declaration exists yet.
+            self.service.preview_action('PREVIEW', 'start')
+        (repository / '.dev-pipeline-preview.json').write_text(json.dumps({
+            'type':'web',
+            'command':[sys.executable, '-u', '-m', 'http.server', '{port}', '--bind', '127.0.0.1'],
+            'health_path':'/',
+            'startup_timeout':5,
+        }))
+        started = self.service.preview_action('PREVIEW', 'start')
+        self.assertIn(started['status'], ('starting', 'running'))
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            detail = self.service.detail('PREVIEW')
+            if detail['preview']['status'] == 'running':
+                break
+            time.sleep(.05)
+        self.assertEqual('running', detail['preview']['status'])
+        self.assertTrue(detail['preview']['url'].startswith('/preview/'))
+        approval = self.service.act('PREVIEW', 'human-check', {
+            'request_id':'preview-accept', 'revision':detail['revision'], 'result':'ACCEPT'})
+        self.assertEqual('stopped', self.service.detail('PREVIEW')['preview']['status'])
+        self.wait_job(approval)
+
     def test_api_security_static_boundary_and_creation(self):
         server = ThreadingHTTPServer(('127.0.0.1',0), BaseHTTPRequestHandler)
         origin = f'http://127.0.0.1:{server.server_port}'
