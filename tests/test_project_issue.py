@@ -191,3 +191,21 @@ class ProjectIssueTests(unittest.TestCase):
             self.assertEqual(detail["config"]["agent"], "codex")
         finally:
             svc.close()
+
+    def test_models_schema_tolerance(self):
+        from dev_pipeline.models import PipelineState, RunOutcome
+        phase = Phase.from_dict({"id": "p1", "sequence": 1, "goal": "g", "scope": ["s"], "acceptance_criteria": ["c"], "unknown_attr": "extra"})
+        self.assertEqual(phase.id, "p1")
+
+        project = Project.from_dict({"id": "proj-1", "extra_param": 1234})
+        self.assertEqual(project.id, "proj-1")
+
+        issue = Issue.from_dict({"id": "iss-1", "description": "desc", "phase_order": ["p1"], "future_flag": True})
+        self.assertEqual(issue.id, "iss-1")
+
+        state = PipelineState.from_dict({"issue_id": "iss-1", "state": "PLANNING", "current_phase": None, "current_run": 0, "review_retries": 2, "unexpected_key": "val"})
+        self.assertEqual(state.issue_id, "iss-1")
+        self.assertEqual(state.state, "PLANNING")
+
+        outcome = RunOutcome.from_dict({"result": "GOAL_REACHED", "completed": [], "remaining": [], "problems": [], "recommended_next_action": "review", "bonus": [1, 2]})
+        self.assertEqual(outcome.result, "GOAL_REACHED")

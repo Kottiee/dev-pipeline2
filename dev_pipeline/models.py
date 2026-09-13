@@ -38,7 +38,8 @@ class Phase:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Phase":
-        phase = cls(**value)
+        data = {k: v for k, v in value.items() if k in cls.__dataclass_fields__}
+        phase = cls(**data)
         if phase.status not in PHASE_STATUSES:
             raise ValueError(f"invalid phase status: {phase.status}")
         if not phase.goal or not phase.acceptance_criteria:
@@ -63,7 +64,8 @@ class Project:
     def from_dict(cls, value: dict[str, Any]) -> "Project":
         data = dict(value)
         data["checks"] = _parse_checks(data.get("checks"))
-        return cls(**data)
+        filtered = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**filtered)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,7 +102,8 @@ class Issue:
             data.pop("constraints", None)
         if "created_at" not in data:
             data["created_at"] = now_iso()
-        issue = cls(**data)
+        filtered = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        issue = cls(**filtered)
         if not issue.description or not issue.phase_order:
             raise ValueError("issue description and at least one phase are required")
         return issue
@@ -132,7 +135,8 @@ class PipelineState:
             data["issue_id"] = data.pop("initiative_id")
         else:
             data.pop("initiative_id", None)
-        state = cls(**data)
+        filtered = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        state = cls(**filtered)
         if state.state not in PIPELINE_STATES:
             raise ValueError(f"invalid pipeline state: {state.state}")
         return state
@@ -155,7 +159,8 @@ class RunOutcome:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunOutcome":
-        outcome = cls(**value)
+        filtered = {k: v for k, v in value.items() if k in cls.__dataclass_fields__}
+        outcome = cls(**filtered)
         if outcome.result not in {"CONTINUE", "GOAL_REACHED"}:
             raise ValueError("run result must be CONTINUE or GOAL_REACHED")
         return outcome
