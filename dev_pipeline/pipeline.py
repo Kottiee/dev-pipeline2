@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .agents.base import Agent, AgentError
+from .agents.base import Agent, AgentError, AgentResult
 from .allocation import collect_agent_allocation
 from .models import Issue, Phase, PipelineState, RunOutcome, now_iso
 from .prompts import render_prompt
@@ -13,8 +15,42 @@ from .store import IssueStore, WorkStore
 from .usage import DEFAULT_TOKEN_USAGE_FORMAT, extract_token_usage
 
 
+def format_changelog_entry(issue_id: str, title: str, date: str, summary: str, changes: list[str]) -> str:
+    bullet_items = "\n".join(f"- {item}" for item in changes)
+    id_part = f"[{issue_id}] " if issue_id else ""
+    return f"""## {id_part}{title} - {date}
+
+{summary}
+
+### 主な変更点
+{bullet_items}"""
+
+
+def update_changelog_markdown(original: str, entry: str, issue_id: str) -> str:
+    original = original.strip()
+    entry = entry.strip()
+    if not original:
+        return f"# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n{entry}\n"
+
+    if issue_id:
+        pattern = rf"(?ms)^## \[{re.escape(issue_id)}\].*?(?=(?:^## |\Z))"
+        if re.search(pattern, original):
+            replaced = re.sub(pattern, f"{entry}\n\n", original).rstrip()
+            return f"{replaced}\n"
+
+    first_section = re.search(r"(?m)^## ", original)
+    if first_section:
+        pos = first_section.start()
+        prefix = original[:pos].rstrip()
+        suffix = original[pos:].lstrip()
+        return f"{prefix}\n\n{entry}\n\n{suffix}\n"
+
+    return f"{original}\n\n{entry}\n"
+
+
 class TransitionError(RuntimeError):
     pass
+
 
 
 # When neither --check nor registered (init --check) checks are available, verification
@@ -398,12 +434,17 @@ class Pipeline:
         index = issue.phase_order.index(phase.id)
         if index + 1 == len(issue.phase_order):
             state.state, state.current_phase, state.review_retries = "RESOLVED", None, 0
+            self.store.save_state(state)
+            try:
+                self._update_changelog(issue)
+            except Exception:
+                pass
         else:
             next_phase = self.store.load_phase(issue.phase_order[index + 1])
             next_phase.status = "running"
             self.store.save_phase(next_phase)
             state.state, state.current_phase, state.current_run, state.review_retries = "PHASE_RUNNING", next_phase.id, 0, 0
-        self.store.save_state(state)
+            self.store.save_state(state)
         return state.state
 
     def _phase_context(self, phase: Phase) -> str:
@@ -564,3 +605,107 @@ class Pipeline:
 ## Recommended Next Action
 {outcome.recommended_next_action}
 """
+
+    def _changelog_prompt(self, issue: Issue, date_str: str) -> str:
+        phases = [self.store.load_phase(pid) for pid in issue.phase_order]
+        phases_context_lines = []
+        for phase in phases:
+            phases_context_lines.append(f"Phase {phase.id}: {phase.goal}")
+            if phase.acceptance_criteria:
+                phases_context_lines.append(f"  受入条件: {phase.acceptance_criteria}")
+            checkpoints = sorted((self.store.path / "runs").glob(f"{phase.id}-run-*.md"),
+                                 key=lambda p: int(p.stem.rsplit("-", 1)[1]))
+            if checkpoints:
+                try:
+                    phases_context_lines.append(f"  チェックポイント:\n{checkpoints[-1].read_text(encoding='utf-8')}")
+                except Exception:
+                    pass
+        phases_context = "\n\n".join(phases_context_lines) or "none"
+        return render_prompt(
+            "changelog",
+            issue_id=issue.id or "ISSUE",
+            description=issue.description,
+            phases_context=phases_context,
+            date=date_str,
+        )
+
+    @staticmethod
+    def _validate_changelog(data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValueError("changelog data must be an object")
+        title = data.get("title")
+        summary = data.get("summary")
+        changes = data.get("changes")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("changelog title must be a non-empty string")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("changelog summary must be a non-empty string")
+        if not isinstance(changes, list) or not changes:
+            raise ValueError("changelog changes must be a non-empty array")
+        clean_changes = [str(c).strip() for c in changes if str(c).strip()]
+        if not clean_changes:
+            raise ValueError("changelog changes must have at least one valid item")
+        return {
+            "title": title.strip(),
+            "summary": summary.strip(),
+            "changes": clean_changes,
+        }
+
+    def _update_changelog(self, issue: Issue) -> dict[str, Any]:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        title = issue.description
+        summary = f"{issue.description} の実装が完了しました。"
+        phases = [self.store.load_phase(pid) for pid in issue.phase_order]
+        changes = [f"{p.id}: {p.goal}" for p in phases]
+        status = "SUCCESS"
+        agent_log = ""
+
+        try:
+            prompt = self._changelog_prompt(issue, date_str)
+            result = self.agent.execute(prompt, self.repository)
+            agent_log = result.stdout + (f"\n{result.stderr}" if result.stderr.strip() else "")
+            self._record_usage("changelog", "", 0, agent_log)
+            validated = self._validate_changelog(result.data)
+            title = validated["title"]
+            summary = validated["summary"]
+            changes = validated["changes"]
+        except Exception as error:
+            status = "FALLBACK"
+            if isinstance(error, AgentError):
+                self._record_failure_usage("changelog", "", 0, error)
+            agent_log = f"Agent execution failed: {error}\nUsing fallback changelog."
+
+        entry_markdown = format_changelog_entry(issue.id, title, date_str, summary, changes)
+        changelog_path = self.repository / "CHANGELOG.md"
+
+        try:
+            original_content = changelog_path.read_text(encoding="utf-8") if changelog_path.exists() else ""
+            new_content = update_changelog_markdown(original_content, entry_markdown, issue.id)
+            changelog_path.write_text(new_content, encoding="utf-8")
+        except Exception as file_error:
+            agent_log += f"\nFailed to write CHANGELOG.md: {file_error}"
+
+        payload = {
+            "issue_id": issue.id,
+            "title": title,
+            "date": date_str,
+            "summary": summary,
+            "changes": changes,
+            "markdown": entry_markdown,
+            "status": status,
+            "created_at": now_iso(),
+        }
+        try:
+            self.store.write_json("evidence/changelog.json", payload)
+            self.store.write_text("evidence/changelog.md", entry_markdown)
+            if agent_log:
+                self.store.write_text("evidence/changelog-agent.log", agent_log)
+        except Exception:
+            pass
+
+        return payload
+
+    def generate_changelog(self) -> dict[str, Any]:
+        issue = self.store.load_issue()
+        return self._update_changelog(issue)
+

@@ -23,6 +23,7 @@ from .reporting import (
     list_issue_ids,
     list_project_ids,
     project_exists,
+    read_changelog,
     read_issue,
     read_pipeline,
     read_project,
@@ -599,6 +600,13 @@ class WebService:
                 "repository": str(p_store.repository_path()),
                 "issues": issues,
             }
+
+    def project_changelog(self, project_id):
+        with self.lock:
+            p_store = ProjectStore(self.work_dir, project_id)
+            if not p_store.exists():
+                raise FileNotFoundError("プロジェクトが見つかりません")
+            return read_changelog(p_store.repository_path())
 
     def list_issues(self, project_id):
         with self.lock:

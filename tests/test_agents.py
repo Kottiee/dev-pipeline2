@@ -79,6 +79,7 @@ class AdapterSelectionTests(unittest.TestCase):
             {"result": "PASS", "findings": []},
             {"recommendation": "APPROVE", "decision_reason": "確認済みです",
              "affected_scope": "対象機能", "required_action": "承認してください", "items": []},
+            {"title": "変更タイトル", "summary": "変更要約です", "changes": ["変更1"]},
         ])
         calls = []
 
@@ -99,7 +100,8 @@ class AdapterSelectionTests(unittest.TestCase):
                 self.assertEqual(0, main(args + ["run", "TEST", "--until-ready", "--check", check]))
                 self.assertEqual(0, main(args + ["human-check", "TEST", "ACCEPT"]))
             self.assertEqual("RESOLVED", WorkStore(repo / "work", "TEST").load_state().state)
-        self.assertEqual(4, len(calls))
+            self.assertTrue((repo / "CHANGELOG.md").exists())
+        self.assertEqual(5, len(calls))
         self.assertTrue(all(repository == repo for _, repository in calls))
 
     def test_init_without_repo_derives_and_creates_default_repository(self):

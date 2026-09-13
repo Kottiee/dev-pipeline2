@@ -105,7 +105,21 @@ def read_issue(work_dir: Path, project_id: str, issue_id: str,
         )
         if checkpoints:
             result["checkpoint"] = _read_tail(checkpoints[-1])
+
+    try:
+        result["changelog"] = store.read_json("evidence/changelog.json")
+    except FileNotFoundError:
+        result["changelog"] = None
+
     return result
+
+
+def read_changelog(repository: Path) -> str:
+    path = repository / "CHANGELOG.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
 
 
 def read_project(work_dir: Path, project_id: str) -> dict[str, Any]:
@@ -201,4 +215,10 @@ def read_pipeline(work_dir: Path, target_id: str,
         )
         if checkpoints:
             result["checkpoint"] = _read_tail(checkpoints[-1])
+
+    try:
+        result["changelog"] = store.read_json("evidence/changelog.json")
+    except FileNotFoundError:
+        result["changelog"] = None
+
     return result

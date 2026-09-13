@@ -125,10 +125,16 @@ function evidenceView() {
   const summary = ev.review_summary;
   return head + businessReviewSummary(summary) + technicalFindings(result,!summary || summary.status !== 'SUCCESS') + '<p class="hint">保存された最新のレビュー結果です。修正中は前回の結果が表示されます。</p>';
 }
+function changelogSection(changelog) {
+  if (!changelog) return '';
+  const changes = changelog.changes || [];
+  return `<section class="section changelog-section"><div class="business-summary"><div class="result-heading">${badge('CHANGELOG', 'success')}<strong>変更履歴（ユーザー向け要約）</strong><span class="muted">${esc(changelog.date || '')}</span></div><div class="summary-overview"><h4>${esc(changelog.title || '')}</h4><p>${esc(changelog.summary || '')}</p>${changes.length ? `<h4>主な変更点</h4><ul>${changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}</div></div></section>`;
+}
 function overviewView() {
   const current = detail.phases.find(p => p.id === detail.state.current_phase);
   const iss = detail.issue;
-  return `${current ? `<section class="section"><h3>このフェーズの受け入れ条件</h3><ul>${current.acceptance_criteria.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></section>`:''}
+  return `${changelogSection(detail.changelog)}
+  ${current ? `<section class="section"><h3>このフェーズの受け入れ条件</h3><ul>${current.acceptance_criteria.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></section>`:''}
   <section class="section"><h3>フェーズ構成</h3><div class="phase-list">${detail.phases.map((p,i)=>`<div class="phase-item"><span class="phase-index">${String(i+1).padStart(2,'0')}</span><p>${esc(p.goal)}</p>${badge(phases[p.status],p.status==='accepted'?'success':p.status==='awaiting_human_check'?'waiting':'')}</div>`).join('') || '<p class="muted">要求からフェーズを計画しています。</p>'}</div></section>
   ${detail.checkpoint ? `<details><summary>直近Runのチェックポイント</summary><pre class="log">${esc(detail.checkpoint)}</pre></details>`:''}
   <details><summary>依頼の詳細</summary><div class="section"><p class="prose">${esc(iss.description || detail.config.request || '指定なし')}</p></div></details>

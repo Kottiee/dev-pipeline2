@@ -84,6 +84,8 @@ def handler_for(service, origins, allowed_users=()):
                         self._send(200, {"issues": service.list_issues(subparts[0])})
                     elif len(subparts) == 3 and subparts[1] == "issues":
                         self._send(200, service.issue_detail(subparts[0], subparts[2]))
+                    elif len(subparts) == 2 and subparts[1] == "changelog":
+                        self._send(200, {"changelog": service.project_changelog(subparts[0])})
                     else:
                         self._send(404, {"error": "見つかりません"})
                 elif path == "/api/initiatives":

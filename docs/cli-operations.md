@@ -77,7 +77,19 @@ dev-pipeline issue human-check my-service 0001-login FEEDBACK \
 dev-pipeline issue run my-service 0001-login --until-ready
 ```
 
-最終フェーズを承認するとIssueは `RESOLVED` になります。次のIssue（例: `0002-logout`）を開始すると、過去に解決されたIssueのゴールや受け入れ条件が自動的にプロンプトへ組み込まれます。
+最終フェーズを承認するとIssueは `RESOLVED` になります。このとき、リポジトリの `CHANGELOG.md` にユーザー目線の変更要約が自動的に生成・追記されます。次のIssue（例: `0002-logout`）を開始すると、過去に解決されたIssueのゴールや受け入れ条件が自動的にプロンプトへ組み込まれます。
+
+### 変更履歴（CHANGELOG）の確認と再生成 (`dev-pipeline issue changelog`)
+
+```bash
+# 解決済みIssueの変更要約を表示
+dev-pipeline issue changelog my-service 0001-login
+
+# 変更要約を手動で再生成
+dev-pipeline issue changelog my-service 0001-login --generate
+```
+
+リポジトリルートの `CHANGELOG.md` に最新の解決内容が記録され、Web UIの概要画面やAPI (`/api/projects/<project_id>/changelog`) からも確認できます。
 
 ---
 

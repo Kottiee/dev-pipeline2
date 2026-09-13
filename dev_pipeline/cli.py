@@ -178,6 +178,14 @@ def build_parser() -> argparse.ArgumentParser:
     i_status.add_argument("project_id")
     i_status.add_argument("issue_id")
 
+    i_changelog = i_sub.add_parser("changelog", help="view or generate user-facing changelog")
+    i_changelog.add_argument("project_id")
+    i_changelog.add_argument("issue_id")
+    i_changelog.add_argument("--generate", action="store_true", help="generate or regenerate changelog entry")
+    i_changelog.add_argument("--agent", help="override agent adapter")
+    i_changelog.add_argument("--agent-command", help="override agent command")
+    i_changelog.add_argument("--repo", help="override repository path")
+
     # 3. Legacy top-level commands
     init = sub.add_parser("init", help="legacy plan and start")
     init.add_argument("--id", required=True)
@@ -213,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", help="legacy show")
     show.add_argument("id")
 
+    changelog = sub.add_parser("changelog", help="legacy view or generate changelog")
+    changelog.add_argument("id")
+    changelog.add_argument("--generate", action="store_true", help="generate or regenerate changelog entry")
+
     return parser
 
 
@@ -232,6 +244,12 @@ def _show_issue(issue_store: IssueStore) -> str:
     if phases:
         lines.append("Phases:")
         lines.extend(f"  {p.id}: {p.status}" for p in phases)
+    try:
+        cl = issue_store.read_json("evidence/changelog.json")
+        if cl and cl.get("summary"):
+            lines.append(f"Changelog: {cl.get('title')} - {cl.get('summary')}")
+    except Exception:
+        pass
     lines.append(format_token_usage(issue_store.load_token_usage()))
     lines.append(format_allocation_usage(issue_store.load_allocation_usage()))
     return "\n".join(lines)
@@ -440,6 +458,17 @@ def _execute_issue(args: argparse.Namespace, p_store: ProjectStore) -> int:
         return 0 if passed else 1
     elif args.subcommand == "human-check":
         print(pipeline.human_check(args.result, args.feedback, args.expected_revision))
+    elif args.subcommand == "changelog":
+        if getattr(args, "generate", False):
+            payload = pipeline.generate_changelog()
+            print(payload.get("markdown", ""))
+        else:
+            try:
+                data = issue_store.read_json("evidence/changelog.json")
+                print(data.get("markdown", ""))
+            except FileNotFoundError:
+                payload = pipeline.generate_changelog()
+                print(payload.get("markdown", ""))
     return 0
 
 
@@ -496,6 +525,17 @@ def _execute_legacy(args: argparse.Namespace, store: WorkStore) -> int:
         return 0 if passed else 1
     elif args.command == "human-check":
         print(pipeline.human_check(args.result, args.feedback, args.expected_revision))
+    elif args.command == "changelog":
+        if getattr(args, "generate", False):
+            payload = pipeline.generate_changelog()
+            print(payload.get("markdown", ""))
+        else:
+            try:
+                data = store.read_json("evidence/changelog.json")
+                print(data.get("markdown", ""))
+            except FileNotFoundError:
+                payload = pipeline.generate_changelog()
+                print(payload.get("markdown", ""))
     return 0
 
 

@@ -1,0 +1,20 @@
+Create a concise Japanese changelog entry for an end-user or business stakeholder.
+This changelog documents what changed from the user's perspective upon resolving an issue.
+This is a separate reporting step. Do not inspect or modify the repository.
+
+Issue ID: $issue_id
+Issue Description: $description
+Phases and Completed Work:
+$phases_context
+Date: $date
+
+Guidelines:
+1. Explain what changed, what new capabilities are available, or what issues were resolved from the user/business perspective.
+2. Avoid low-level technical jargon, internal code details, function names, and file paths unless essential for the user.
+3. Express changes in terms of user-visible features, workflows, performance, or behavior improvements.
+4. "changes" should be a concise bulleted list of 2 to 5 items highlighting specific improvements.
+
+Output exactly one JSON object and nothing after it. Schema:
+{"title":"簡潔なタイトル","summary":"何が変わったか、何ができるようになったかの概要","changes":["変更点1","変更点2"]}
+
+Use valid JSON string escaping.
