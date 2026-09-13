@@ -16,8 +16,8 @@ from pathlib import Path
 def main() -> None:
     prompt = sys.stdin.read()
 
-    # 1. Adversarial Review Prompt
-    if "adversarial reviewer" in prompt.lower():
+    # 1. Review Prompt
+    if "reviewer" in prompt.lower():
         if os.environ.get("MOCK_REVIEW_FAIL") == "1":
             print(json.dumps({
                 "result": "FINDINGS",

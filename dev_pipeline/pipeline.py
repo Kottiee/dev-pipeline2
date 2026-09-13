@@ -100,7 +100,52 @@ class Pipeline:
             return "VERIFICATION_FAILED"
         return "READY" if self.review() else "REVIEW_FINDINGS"
 
-    def run_until_ready(self, checks: list[tuple[str, str]], verify: bool = True) -> str:
+    def _is_verification_passed(self, phase_id: str) -> bool:
+        path = self.store.path / "evidence" / f"{phase_id}-verification.json"
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data.get("overall") == "PASS"
+        except (OSError, ValueError):
+            return False
+
+    def _auto_pass_after_retries(self, state: PipelineState, max_review_retries: int) -> None:
+        if not state.current_phase:
+            return
+        phase = self.store.load_phase(state.current_phase)
+        state.state = "AWAITING_HUMAN_CHECK"
+        phase.status = "awaiting_human_check"
+        self.store.save_phase(phase)
+        self.store.save_state(state)
+
+        review_path = f"evidence/{phase.id}-adversarial-review.json"
+        if (self.store.path / review_path).exists():
+            try:
+                rev_data = self.store.read_json(review_path)
+                rev_data["auto_passed"] = True
+                rev_data["warning"] = (
+                    f"Phase automatically approved after reaching maximum review retries ({max_review_retries}) "
+                    "with passing automated tests."
+                )
+                self.store.write_json(review_path, rev_data)
+            except Exception:
+                pass
+
+        summary_path = f"evidence/{phase.id}-review-summary.json"
+        if (self.store.path / summary_path).exists():
+            try:
+                summary_data = self.store.read_json(summary_path)
+                summary_data["auto_passed"] = True
+                summary_data["warning"] = (
+                    f"Phase auto-approved after {max_review_retries} review retries with passing automated tests."
+                )
+                self.store.write_json(summary_path, summary_data)
+            except Exception:
+                pass
+
+    def run_until_ready(self, checks: list[tuple[str, str]], verify: bool = True,
+                        max_review_retries: int = 2) -> str:
         resolved = self._resolve_checks(checks)
         while True:
             state = self.store.load_state()
@@ -109,9 +154,25 @@ class Pipeline:
             if state.state == "PHASE_VERIFYING":
                 self.verify(resolved)
             elif state.state == "PHASE_REVIEWING":
-                self.review()
-            elif self.run(resolved, verify=verify) == "READY":
-                return "READY"
+                if self.review():
+                    return "READY"
+                state = self.store.load_state()
+                if (state.review_retries >= max_review_retries and
+                        state.current_phase and
+                        self._is_verification_passed(state.current_phase)):
+                    self._auto_pass_after_retries(state, max_review_retries)
+                    return "READY"
+            else:
+                outcome = self.run(resolved, verify=verify)
+                if outcome == "READY":
+                    return "READY"
+                if outcome == "REVIEW_FINDINGS":
+                    state = self.store.load_state()
+                    if (state.review_retries >= max_review_retries and
+                            state.current_phase and
+                            self._is_verification_passed(state.current_phase)):
+                        self._auto_pass_after_retries(state, max_review_retries)
+                        return "READY"
 
     def verify(self, checks: list[tuple[str, str]]) -> bool:
         state = self.store.load_state()
@@ -180,6 +241,33 @@ class Pipeline:
             raise ValueError("FINDINGS review must include at least one finding")
         if decision == "PASS" and findings:
             raise ValueError("PASS review must not contain findings")
+        # Falsification by test: verify test_command for findings if provided
+        if decision == "FINDINGS":
+            tested_count = 0
+            reproduced_count = 0
+            for finding in findings:
+                if isinstance(finding, dict) and "test_command" in finding:
+                    cmd = finding["test_command"]
+                    if isinstance(cmd, str) and cmd.strip():
+                        tested_count += 1
+                        completed = subprocess.run(
+                            cmd, shell=True, cwd=self.repository, text=True,
+                            capture_output=True, check=False,
+                        )
+                        # A reproduction test MUST fail (exit code != 0) to prove a problem exists
+                        if completed.returncode != 0:
+                            finding["test_verified"] = True
+                            finding["test_output"] = completed.stdout + completed.stderr
+                            reproduced_count += 1
+                        else:
+                            finding["test_verified"] = False
+                            finding["test_output"] = completed.stdout + completed.stderr
+
+            # If all findings provided test_commands and none of them reproduced (all passed):
+            if tested_count > 0 and reproduced_count == 0:
+                decision = "PASS"
+                findings = []
+
         self.store.write_json(f"evidence/{phase.id}-adversarial-review.json", {
             "phase_id": phase.id, "run_id": state.current_run, "result": decision, "findings": findings,
             "created_at": now_iso(),
@@ -188,8 +276,10 @@ class Pipeline:
         if decision == "PASS":
             state.state = "AWAITING_HUMAN_CHECK"
             phase.status = "awaiting_human_check"
+            state.review_retries = 0
         else:
             state.state = "PHASE_RUNNING"
+            state.review_retries += 1
         self.store.save_phase(phase)
         self.store.save_state(state)
         self._generate_review_summary(issue, phase, state.current_run, decision, findings)
@@ -297,6 +387,7 @@ class Pipeline:
         })
         if result == "FEEDBACK":
             state.state = "PHASE_FIXING"
+            state.review_retries = 0
             phase.status = "running"
             self.store.save_phase(phase)
             self.store.save_state(state)
@@ -306,12 +397,12 @@ class Pipeline:
         issue = self.store.load_issue()
         index = issue.phase_order.index(phase.id)
         if index + 1 == len(issue.phase_order):
-            state.state, state.current_phase = "RESOLVED", None
+            state.state, state.current_phase, state.review_retries = "RESOLVED", None, 0
         else:
             next_phase = self.store.load_phase(issue.phase_order[index + 1])
             next_phase.status = "running"
             self.store.save_phase(next_phase)
-            state.state, state.current_phase, state.current_run = "PHASE_RUNNING", next_phase.id, 0
+            state.state, state.current_phase, state.current_run, state.review_retries = "PHASE_RUNNING", next_phase.id, 0, 0
         self.store.save_state(state)
         return state.state
 

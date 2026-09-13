@@ -356,6 +356,65 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual("manifest", evidence["checks"][0]["name"])
         self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
 
+    def test_review_with_passing_test_command_is_disproved_and_passes(self):
+        finding = {
+            "severity": "high",
+            "description": "alleged defect",
+            "recommendation": "fix it",
+            "test_command": "python -c 'exit(0)'",
+        }
+        agent = FakeAgent([{"result": "FINDINGS", "findings": [finding]}])
+        pipeline = Pipeline(self.store, self.root, agent)
+        pipeline.verify([("ok", "python -c 'print(1)'")])
+        self.assertTrue(pipeline.review())
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
+        evidence = self.store.read_json("evidence/phase-01-adversarial-review.json")
+        self.assertEqual("PASS", evidence["result"])
+        self.assertEqual([], evidence["findings"])
+
+    def test_review_with_failing_test_command_is_verified_and_findings_kept(self):
+        finding = {
+            "severity": "high",
+            "description": "real defect",
+            "recommendation": "fix it",
+            "test_command": "python -c 'exit(1)'",
+        }
+        agent = FakeAgent([{"result": "FINDINGS", "findings": [finding]}])
+        pipeline = Pipeline(self.store, self.root, agent)
+        pipeline.verify([("ok", "python -c 'print(1)'")])
+        self.assertFalse(pipeline.review())
+        self.assertEqual("PHASE_RUNNING", self.store.load_state().state)
+        evidence = self.store.read_json("evidence/phase-01-adversarial-review.json")
+        self.assertEqual("FINDINGS", evidence["result"])
+        self.assertTrue(evidence["findings"][0]["test_verified"])
+
+    def test_run_until_ready_auto_passes_after_max_review_retries(self):
+        outcome = {"result": "GOAL_REACHED", "completed": ["all"], "remaining": [],
+                   "problems": [], "recommended_next_action": "verify"}
+        finding = {"severity": "medium", "description": "unfalsifiable nitpick",
+                   "recommendation": "refactor"}
+        agent = FakeAgent([
+            outcome, {"result": "FINDINGS", "findings": [finding]},
+            outcome, {"result": "FINDINGS", "findings": [finding]},
+        ])
+        pipeline = Pipeline(self.store, self.root, agent)
+        self.assertEqual("READY", pipeline.run_until_ready([("ok", "python -c 'print(1)'")], max_review_retries=2))
+        self.assertEqual("AWAITING_HUMAN_CHECK", self.store.load_state().state)
+        evidence = self.store.read_json("evidence/phase-01-adversarial-review.json")
+        self.assertTrue(evidence.get("auto_passed"))
+        self.assertIn("maximum review retries (2)", evidence.get("warning", ""))
+
+    def test_run_until_ready_does_not_auto_pass_when_verification_fails(self):
+        outcome = {"result": "GOAL_REACHED", "completed": [], "remaining": [],
+                   "problems": [], "recommended_next_action": "verify"}
+        agent = FakeAgent([outcome])
+        pipeline = Pipeline(self.store, self.root, agent)
+        self.assertEqual("VERIFICATION_FAILED", pipeline.run([("fail", "python -c 'exit(1)'")]))
+        state = self.store.load_state()
+        state.review_retries = 5
+        self.store.save_state(state)
+        self.assertFalse(pipeline._is_verification_passed("phase-01"))
+
 
 class AgentParsingTests(unittest.TestCase):
     def test_codex_command_uses_workspace_write(self):
