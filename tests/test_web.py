@@ -26,8 +26,8 @@ FAKE_AGENT = r'''
 import json, pathlib, shlex, sys, time
 prompt = sys.stdin.read()
 pathlib.Path('last-prompt.txt').write_text(prompt)
-if pathlib.Path('slow').exists():
-    time.sleep(60)
+while pathlib.Path('slow').exists():
+    time.sleep(0.05)
 if prompt.startswith('Turn this human request'):
     result = {'description': '集計を作る',
               'phases': [{'goal': name, 'scope': ['implementation'], 'acceptance_criteria': ['tests pass']}
@@ -137,6 +137,70 @@ class WebServiceTests(unittest.TestCase):
         self.service = FakeWebService(self.root / 'work', self.program)
         self.assertEqual('AWAITING_HUMAN_CHECK', self.service.detail('KEEP')['state']['state'])
         self.assertEqual(job['id'], self.service.detail('KEEP')['job']['id'])
+
+    def test_detached_job_pid_saved_and_survives_service_restart(self):
+        repository = self.root / 'repo_detach'; repository.mkdir()
+        (repository / 'slow').touch()
+        job = self.service.create({'id': 'DETACH', 'request_id': 'det1', 'request': 'run', 'repository': str(repository)})
+        deadline = time.monotonic() + 5
+        pid = None
+        while time.monotonic() < deadline:
+            current = self.service.detail('DETACH')
+            pid = current['job'].get('pid')
+            if pid:
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(pid)
+        self.assertGreater(pid, 0)
+        self.assertTrue(WebService._is_pid_alive(pid))
+
+        # Close the web service (simulating server restart)
+        self.service.close()
+        # Process MUST still be alive!
+        self.assertTrue(WebService._is_pid_alive(pid))
+
+        # Re-initialize service (re-attach)
+        self.service = FakeWebService(self.root / 'work', self.program)
+        restarted_detail = self.service.detail('DETACH')
+        self.assertEqual('running', restarted_detail['job']['status'])
+        self.assertEqual(pid, restarted_detail['job']['pid'])
+
+        # Stop via new service
+        self.service.stop('DETACH')
+        detail = self.wait_job(restarted_detail['job'])
+        self.assertEqual('stopped', detail['job']['status'])
+        time.sleep(0.2)
+        self.assertFalse(WebService._is_pid_alive(pid))
+
+    def test_detached_job_finishes_successfully_after_service_restart(self):
+        repository = self.root / 'repo_detach_done'; repository.mkdir()
+        (repository / 'slow').touch()
+        job = self.service.create({'id': 'DETACH_DONE', 'request_id': 'det2', 'request': 'run', 'repository': str(repository)})
+        deadline = time.monotonic() + 5
+        pid = None
+        while time.monotonic() < deadline:
+            current = self.service.detail('DETACH_DONE')
+            pid = current['job'].get('pid')
+            if pid:
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(pid)
+
+        # Close service while running
+        self.service.close()
+
+        # Remove slow file so the agent completes
+        (repository / 'slow').unlink()
+        deadline = time.monotonic() + 10
+        while WebService._is_pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(WebService._is_pid_alive(pid))
+
+        # Restart service: it should finalize the terminated job as succeeded
+        self.service = FakeWebService(self.root / 'work', self.program)
+        detail = self.service.detail('DETACH_DONE')
+        self.assertEqual('succeeded', detail['job']['status'])
+        self.assertEqual('AWAITING_HUMAN_CHECK', detail['state']['state'])
 
     def test_cli_lock_rejects_other_mutation_and_releases_after_exit(self):
         store = WorkStore(self.root / 'work', 'LOCK')

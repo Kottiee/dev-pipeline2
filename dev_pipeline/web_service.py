@@ -70,10 +70,23 @@ class WebService:
         self.closing = False
         self.configs = self._read("settings.json", {})
         self.jobs = self._read("jobs.json", {})
-        for job in self.jobs.values():
-            if job["status"] in ACTIVE:
-                job.update(status="interrupted", ended_at=now_iso(),
-                           error="サービスの中断を検出しました。状態を確認して再開してください。")
+        for job_id, job in list(self.jobs.items()):
+            if job.get("status") in ACTIVE:
+                pid = job.get("pid")
+                if pid and self._is_pid_alive(pid):
+                    self.cancels[job_id] = threading.Event()
+                    if job.get("status") == "stopping":
+                        self.cancels[job_id].set()
+                    thread = threading.Thread(
+                        target=self._monitor_detached,
+                        args=(job_id, pid),
+                        daemon=True,
+                        name=f"detached-pipeline-{job.get('initiative_id')}"
+                    )
+                    self.threads[job_id] = thread
+                    thread.start()
+                else:
+                    self._finalize_terminated_job(job)
         self._save_jobs()
         self.notifications = Notifications(self.directory, push_subject)
         self.notifications.start()
@@ -90,12 +103,9 @@ class WebService:
     def close(self):
         with self.lock:
             self.closing = True
-            for job in list(self.jobs.values()):
-                if job["status"] in ACTIVE:
-                    self._stop(job)
             threads = list(self.threads.values())
         for thread in threads:
-            thread.join(timeout=7)
+            thread.join(timeout=1.0)
         self.notifications.close()
         self.instance_lock.close()
 
@@ -201,7 +211,8 @@ class WebService:
         job_id = uuid.uuid4().hex
         job = {"id": job_id, "initiative_id": initiative_id, "action": action,
                "request_id": request_id, "status": "queued", "created_at": now_iso(),
-               "repository": config["repository"], "error": None, "returncode": None}
+               "repository": config["repository"], "error": None, "returncode": None,
+               "pid": None}
         self.jobs[job_id] = job
         self.cancels[job_id] = threading.Event()
         self._save_jobs()
@@ -223,6 +234,9 @@ class WebService:
                                        cwd=Path(__file__).resolve().parent.parent,
                                        start_new_session=True)
             self.processes[job_id] = process
+            if job_id in self.jobs:
+                self.jobs[job_id]["pid"] = process.pid
+                self._save_jobs()
         stopping_at = None
         while process.poll() is None:
             if self.cancels[job_id].is_set():
@@ -253,7 +267,32 @@ class WebService:
         try:
             os.killpg(process.pid, sig)
         except ProcessLookupError:
-            pass
+            try:
+                process.send_signal(sig)
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def _signal_pid(pid: int, sig: int) -> None:
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def _is_pid_alive(pid: int | None) -> bool:
+        if not pid or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
 
     def _execute(self, job_id, config, extra):
         job = self.jobs[job_id]
@@ -327,13 +366,98 @@ class WebService:
     def _stop(self, job):
         if job["status"] not in ACTIVE:
             raise Conflict("現在実行中のジョブはありません")
-        self.cancels[job["id"]].set()
+        job_id = job["id"]
+        if job_id not in self.cancels:
+            self.cancels[job_id] = threading.Event()
+        self.cancels[job_id].set()
         job["status"] = "stopping"
-        process = self.processes.get(job["id"])
+        process = self.processes.get(job_id)
         if process:
             self._signal(process, signal.SIGTERM)
+        elif job.get("pid"):
+            self._signal_pid(job["pid"], signal.SIGTERM)
         self._save_jobs()
         return job.copy()
+
+    def _monitor_detached(self, job_id, pid):
+        stopping_at = None
+        while self._is_pid_alive(pid):
+            if self.cancels.get(job_id) and self.cancels[job_id].is_set():
+                if stopping_at is None:
+                    self._signal_pid(pid, signal.SIGTERM)
+                    stopping_at = time.monotonic()
+                elif time.monotonic() - stopping_at > 3:
+                    self._signal_pid(pid, signal.SIGKILL)
+            time.sleep(0.5)
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job and job.get("status") in ACTIVE:
+                self._finalize_terminated_job(job)
+                self._save_jobs()
+            self.cancels.pop(job_id, None)
+            self.threads.pop(job_id, None)
+
+    def _finalize_terminated_job(self, job):
+        job_id = job["id"]
+        initiative_id = job.get("initiative_id", "")
+        pid = job.get("pid")
+        if not pid and job.get("status") == "queued":
+            job.update(status="interrupted", ended_at=now_iso(),
+                       error="サービスの中断を検出しました。状態を確認して再開してください。")
+            return
+
+        stopped = (job_id in self.cancels and self.cancels[job_id].is_set()) or job.get("status") == "stopping"
+        if stopped:
+            job.update(status="stopped", ended_at=now_iso(), returncode=-signal.SIGTERM, error=None)
+            self.notifications.notify("実行を停止しました", f"{initiative_id} は保存済み状態から再開できます。", initiative_id)
+            return
+
+        log_file = self.directory / "job-logs" / f"{job_id}.log"
+        log_text = ""
+        if log_file.exists():
+            try:
+                log_text = log_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        lines = [line.strip() for line in log_text.strip().splitlines() if line.strip()]
+        last_line = lines[-1] if lines else ""
+
+        project_id = job.get("project_id")
+        issue_id = job.get("issue_id")
+        succeeded = (last_line == "READY")
+        if not succeeded and project_id and issue_id:
+            try:
+                p_info = read_issue(self.work_dir, project_id, issue_id, include_evidence=False)
+                state = p_info.get("state", {}).get("state")
+                if state in ("AWAITING_HUMAN_CHECK", "RESOLVED", "COMPLETED"):
+                    succeeded = True
+            except Exception:
+                pass
+        elif not succeeded and initiative_id:
+            try:
+                pipeline = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
+                state = pipeline.get("state", {}).get("state")
+                if state in ("AWAITING_HUMAN_CHECK", "RESOLVED", "COMPLETED"):
+                    succeeded = True
+            except Exception:
+                pass
+
+        if succeeded:
+            job.update(status="succeeded", ended_at=now_iso(), returncode=0, error=None)
+            try:
+                if project_id and issue_id:
+                    detail = read_issue(self.work_dir, project_id, issue_id, include_evidence=False)
+                else:
+                    detail = read_pipeline(self.work_dir, initiative_id, include_evidence=False)
+                title = "承認待ち" if detail["actions"]["human_check"] else "案件が完了しました"
+                phase = detail["state"]["current_phase"] or "完了"
+                self.notifications.notify(title, f"{initiative_id} / {phase}", initiative_id)
+            except Exception:
+                pass
+        else:
+            job.update(status="failed", ended_at=now_iso(), returncode=1,
+                       error="実行に失敗しました。実行ログを確認してください。")
+            self.notifications.notify("実行エラー", f"{initiative_id} の実行が停止しました。", initiative_id)
 
     def stop(self, initiative_id):
         with self.lock:
@@ -615,7 +739,8 @@ class WebService:
         job = {"id": job_id, "initiative_id": f"{project_id}/{issue_id}",
                "project_id": project_id, "issue_id": issue_id, "action": action,
                "request_id": request_id, "status": "queued", "created_at": now_iso(),
-               "repository": config["repository"], "error": None, "returncode": None}
+               "repository": config["repository"], "error": None, "returncode": None,
+               "pid": None}
         self.jobs[job_id] = job
         self.cancels[job_id] = threading.Event()
         self._save_jobs()
