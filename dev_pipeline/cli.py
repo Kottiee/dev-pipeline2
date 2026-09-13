@@ -139,6 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     i_run.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     i_run.add_argument("--until-ready", action="store_true",
                        help="continue implementation and repair until Human Check is ready")
+    i_run.add_argument("--max-review-retries", type=int, default=2,
+                       help="maximum review retries before auto-passing verified phase")
     i_run.add_argument("--no-verify", action="store_true",
                        help="skip mechanical verification and proceed straight to review")
     i_run.add_argument("--agent", help="override agent adapter")
@@ -188,6 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("id")
     run.add_argument("--check", action="append", default=[], metavar="NAME=COMMAND")
     run.add_argument("--until-ready", action="store_true")
+    run.add_argument("--max-review-retries", type=int, default=2,
+                     help="maximum review retries before auto-passing verified phase")
     run.add_argument("--no-verify", action="store_true")
 
     verify = sub.add_parser("verify", help="legacy verify")
@@ -423,7 +427,7 @@ def _execute_issue(args: argparse.Namespace, p_store: ProjectStore) -> int:
         checks = _checks(args.check)
         verify = not args.no_verify
         if args.until_ready:
-            print(pipeline.run_until_ready(checks, verify=verify))
+            print(pipeline.run_until_ready(checks, verify=verify, max_review_retries=args.max_review_retries))
         else:
             print(pipeline.run(checks, verify=verify))
     elif args.subcommand == "verify":
@@ -479,7 +483,7 @@ def _execute_legacy(args: argparse.Namespace, store: WorkStore) -> int:
         checks = _checks(args.check)
         verify = not args.no_verify
         if args.until_ready:
-            print(pipeline.run_until_ready(checks, verify=verify))
+            print(pipeline.run_until_ready(checks, verify=verify, max_review_retries=args.max_review_retries))
         else:
             print(pipeline.run(checks, verify=verify))
     elif args.command == "verify":

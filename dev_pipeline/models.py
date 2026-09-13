@@ -118,6 +118,7 @@ class PipelineState:
     state: str
     current_phase: str | None
     current_run: int = 0
+    review_retries: int = 0
     last_updated_at: str = field(default_factory=now_iso)
 
     @property

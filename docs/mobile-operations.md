@@ -95,15 +95,15 @@ Issueを選ぶと、現在のフェーズ、受け入れ条件、テスト結果
 
 ここからは、利用者へURLを案内する管理者向けです。通常の業務担当者が行う作業ではありません。
 
-### 環境分離構成（Run / Dev / Work）
+### 環境分離構成（Run / Dev / Data）
 
 安全な運用のために、実行環境、開発環境、作業データを3つに分離します。いずれも `~/Projects/` 配下に配置します。
 
-| 区分 | 役割 | ディレクトリ |
-|---|---|---|
-| **Run環境** | launchd が常時動かす本番実行コード | `~/Projects/dev-pipeline2-runtime`（`main` ブランチ固定） |
-| **Dev環境** | 開発者の編集・ブランチ切替・テスト | `~/Projects/dev-pipeline2` |
-| **Work** | 案件データ・成果物リポジトリ・ログ | `~/Projects/dev-pipeline2-data` |
+| 区分 | 役割 | ディレクトリ | ワークディレクトリ（`--work-dir`） |
+|---|---|---|---|
+| **Run環境** | launchd が常時動かす本番実行環境 | `~/Projects/dev-pipeline2-runtime`（`main` ブランチ固定） | `~/Projects/dev-pipeline2-data` |
+| **Dev環境** | 開発者の編集・ブランチ切替・テスト | `~/Projects/dev-pipeline2` | `~/Projects/dev-pipeline2/work`（直下の `work/`） |
+| **Data** | 本番の案件データ・成果物リポジトリ・ログ | `~/Projects/dev-pipeline2-data` | （Run環境が参照） |
 
 開発環境でブランチの切り替えやソース編集を行っても、実行中のRunや次回Runに干渉しません。
 
@@ -176,18 +176,35 @@ PCがスリープ、ログアウト、電源切れ、ネットワーク切断に
 
 ### 開発環境（Dev）での動作確認
 
-開発環境（`~/Projects/dev-pipeline2`）でWebサーバーやCLIの動作確認を行う際は、本番データ（`dev-pipeline2-data`）に影響を与えないよう、必ず別の `--work-dir` を指定してください。また、launchdで本番サーバーがポート8787で稼働している場合は、別のポートを指定します。
+開発環境（`~/Projects/dev-pipeline2`）でWebサーバーやCLIの動作確認を行う際は、本番データ（`dev-pipeline2-data`）に影響を与えないよう、開発環境直下の `work`（`~/Projects/dev-pipeline2/work`）を使用します。
+また、launchdで本番サーバーがポート8787で稼働しているため、開発用Webサーバーはポート8788で起動します。
 
 ```bash
 cd ~/Projects/dev-pipeline2
 source .venv/bin/activate
 
-# 開発環境のworkディレクトリと別ポートでWebサーバーを起動
+# 開発環境のworkディレクトリと別ポート(8788)でWebサーバーを起動
 dev-pipeline-web --work-dir ~/Projects/dev-pipeline2/work --port 8788
 ```
 
-CLIで動作確認する場合も同様に開発用ディレクトリを指定します。
+CLIで動作確認する場合、`dev-pipeline2` ディレクトリ直下では `--work-dir` の既定値が `work`（`./work`）のため、`--work-dir` を省略しても自動的に `work` が参照されます。
 
 ```bash
+# デフォルトで ./work を参照
+dev-pipeline status <案件ID>
+
+# または明示指定
 dev-pipeline --work-dir ~/Projects/dev-pipeline2/work status <案件ID>
+```
+
+#### 本番案件（dev-pipeline2-data）を開発環境で検証したい場合
+
+本番データ（`dev-pipeline2-data`）上の案件を手元で安全にテスト・再現検証したい場合は、対象案件を開発環境の `work/` へコピーして実行します。本番データや本番実行環境には一切影響しません。
+
+```bash
+# 本番から開発環境のworkへ案件データをコピー
+cp -r ~/Projects/dev-pipeline2-data/<案件ID> ~/Projects/dev-pipeline2/work/
+
+# 手元で安全に実行・検証
+python3 -m dev_pipeline.cli issue run <案件ID> <Issue_ID> --until-ready
 ```
