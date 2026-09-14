@@ -165,6 +165,9 @@ class Pipeline:
                     "with passing automated tests."
                 )
                 self.store.write_json(review_path, rev_data)
+                run_rev_path = f"evidence/{phase.id}-run-{state.current_run:03d}-adversarial-review.json"
+                if (self.store.path / run_rev_path).exists():
+                    self.store.write_json(run_rev_path, rev_data)
             except Exception:
                 pass
 
@@ -177,6 +180,9 @@ class Pipeline:
                     f"Phase auto-approved after {max_review_retries} review retries with passing automated tests."
                 )
                 self.store.write_json(summary_path, summary_data)
+                run_sum_path = f"evidence/{phase.id}-run-{state.current_run:03d}-review-summary.json"
+                if (self.store.path / run_sum_path).exists():
+                    self.store.write_json(run_sum_path, summary_data)
             except Exception:
                 pass
 
@@ -232,11 +238,14 @@ class Pipeline:
                             "command": f"read {TEST_MANIFEST_FILE}"})
             logs.append(message)
             overall = False
-            self.store.write_json(f"evidence/{phase_id}-verification.json", {
+            verif_data = {
                 "phase_id": phase_id, "run_id": state.current_run,
                 "overall": "FAIL", "checks": results, "created_at": now_iso(),
-            })
+            }
+            self.store.write_json(f"evidence/{phase_id}-verification.json", verif_data)
+            self.store.write_json(f"evidence/{phase_id}-run-{state.current_run:03d}-verification.json", verif_data)
             self.store.write_text(f"evidence/{phase_id}-verification.log", message)
+            self.store.write_text(f"evidence/{phase_id}-run-{state.current_run:03d}-verification.log", message)
             state.state = "PHASE_RUNNING"
             self.store.save_state(state)
             return False
@@ -247,12 +256,16 @@ class Pipeline:
             overall &= completed.returncode == 0
             results.append({"name": name, "status": status, "command": command})
             logs.append(f"$ {command}\n{completed.stdout}{completed.stderr}")
-        self.store.write_json(f"evidence/{phase_id}-verification.json", {
+        verif_data = {
             "phase_id": phase_id, "run_id": state.current_run,
             "overall": "PASS" if overall else "FAIL", "checks": results,
             "created_at": now_iso(),
-        })
-        self.store.write_text(f"evidence/{phase_id}-verification.log", "\n".join(logs))
+        }
+        verif_log = "\n".join(logs)
+        self.store.write_json(f"evidence/{phase_id}-verification.json", verif_data)
+        self.store.write_json(f"evidence/{phase_id}-run-{state.current_run:03d}-verification.json", verif_data)
+        self.store.write_text(f"evidence/{phase_id}-verification.log", verif_log)
+        self.store.write_text(f"evidence/{phase_id}-run-{state.current_run:03d}-verification.log", verif_log)
         state.state = "PHASE_REVIEWING" if overall else "PHASE_RUNNING"
         self.store.save_state(state)
         return overall
@@ -304,11 +317,15 @@ class Pipeline:
                 decision = "PASS"
                 findings = []
 
-        self.store.write_json(f"evidence/{phase.id}-adversarial-review.json", {
+        review_data = {
             "phase_id": phase.id, "run_id": state.current_run, "result": decision, "findings": findings,
             "created_at": now_iso(),
-        })
-        self.store.write_text(f"evidence/{phase.id}-review-agent.log", result.stdout + result.stderr)
+        }
+        review_log = result.stdout + result.stderr
+        self.store.write_json(f"evidence/{phase.id}-adversarial-review.json", review_data)
+        self.store.write_json(f"evidence/{phase.id}-run-{state.current_run:03d}-adversarial-review.json", review_data)
+        self.store.write_text(f"evidence/{phase.id}-review-agent.log", review_log)
+        self.store.write_text(f"evidence/{phase.id}-run-{state.current_run:03d}-review-agent.log", review_log)
         if decision == "PASS":
             state.state = "AWAITING_HUMAN_CHECK"
             phase.status = "awaiting_human_check"
@@ -327,40 +344,48 @@ class Pipeline:
     ) -> None:
         """Create optional business-facing evidence without affecting review state."""
         path = f"evidence/{phase.id}-review-summary.json"
+        run_path = f"evidence/{phase.id}-run-{run_number:03d}-review-summary.json"
+        log_path = f"evidence/{phase.id}-review-summary-agent.log"
+        run_log_path = f"evidence/{phase.id}-run-{run_number:03d}-review-summary-agent.log"
         try:
-            self.store.write_json(path, {
+            pending_payload = {
                 "phase_id": phase.id,
                 "run_id": run_number,
                 "status": "PENDING",
                 "created_at": now_iso(),
-            })
+            }
+            self.store.write_json(path, pending_payload)
+            self.store.write_json(run_path, pending_payload)
             result = self.agent.execute(
                 self._review_summary_prompt(issue, phase, decision, findings),
                 self.repository,
             )
             self._record_usage("review_summary", phase.id, run_number, result.stdout)
             summary = self._validate_review_summary(result.data, decision, len(findings))
-            self.store.write_json(path, {
+            success_payload = {
                 "phase_id": phase.id,
                 "run_id": run_number,
                 "status": "SUCCESS",
                 **summary,
                 "created_at": now_iso(),
-            })
-            self.store.write_text(
-                f"evidence/{phase.id}-review-summary-agent.log",
-                result.stdout + result.stderr,
-            )
+            }
+            self.store.write_json(path, success_payload)
+            self.store.write_json(run_path, success_payload)
+            summary_log = result.stdout + result.stderr
+            self.store.write_text(log_path, summary_log)
+            self.store.write_text(run_log_path, summary_log)
         except Exception as error:
             if isinstance(error, AgentError):
                 self._record_failure_usage("review_summary", phase.id, run_number, error)
-            self.store.write_json(path, {
+            failed_payload = {
                 "phase_id": phase.id,
                 "run_id": run_number,
                 "status": "FAILED",
                 "error": "要約を生成できませんでした",
                 "created_at": now_iso(),
-            })
+            }
+            self.store.write_json(path, failed_payload)
+            self.store.write_json(run_path, failed_payload)
 
     @staticmethod
     def _validate_review_summary(
@@ -417,10 +442,12 @@ class Pipeline:
         if result == "FEEDBACK" and not feedback:
             raise ValueError("feedback text is required for FEEDBACK")
         phase = self.store.load_phase(state.current_phase)
-        self.store.write_json(f"feedback/{phase.id}-{now_iso().replace(':', '')}.json", {
-            "phase_id": phase.id, "result": result,
+        feedback_payload = {
+            "phase_id": phase.id, "run_id": state.current_run, "result": result,
             "feedback": feedback if result == "FEEDBACK" else None, "created_at": now_iso(),
-        })
+        }
+        self.store.write_json(f"feedback/{phase.id}-{now_iso().replace(':', '')}.json", feedback_payload)
+        self.store.write_json(f"feedback/{phase.id}-run-{state.current_run:03d}.json", feedback_payload)
         if result == "FEEDBACK":
             state.state = "PHASE_FIXING"
             state.review_retries = 0

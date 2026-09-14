@@ -4,7 +4,8 @@ Only this module knows how pipeline results are laid out on disk. Consumers rece
 plain dictionaries and action capabilities instead of inspecting stored files.
 """
 from __future__ import annotations
-
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,242 @@ def _read_tail(path: Path, limit: int = 100_000) -> str:
         return ""
 
 
+def _collect_phase_runs(store: IssueStore | WorkStore, phase_id: str) -> list[dict[str, Any]]:
+    runs_dir = store.path / "runs"
+    evidence_dir = store.path / "evidence"
+    feedback_dir = store.path / "feedback"
+
+    run_ids: set[int] = set()
+
+    if runs_dir.is_dir():
+        for path in runs_dir.glob(f"{phase_id}-run-*.md"):
+            try:
+                num = int(path.stem.rsplit("-", 1)[1])
+                run_ids.add(num)
+            except (ValueError, IndexError):
+                pass
+
+    if evidence_dir.is_dir():
+        for path in evidence_dir.glob(f"{phase_id}-run-*-*.json"):
+            try:
+                parts = path.stem.split("-run-")
+                if len(parts) == 2:
+                    num_str = parts[1].split("-")[0]
+                    run_ids.add(int(num_str))
+            except (ValueError, IndexError):
+                pass
+
+    if feedback_dir.is_dir():
+        for path in feedback_dir.glob(f"{phase_id}-run-*.json"):
+            try:
+                num = int(path.stem.rsplit("-", 1)[1])
+                run_ids.add(num)
+            except (ValueError, IndexError):
+                pass
+
+    if not run_ids:
+        unnum_verif = evidence_dir / f"{phase_id}-verification.json"
+        if unnum_verif.exists():
+            try:
+                data = json.loads(unnum_verif.read_text(encoding="utf-8"))
+                run_num = data.get("run_id")
+                if isinstance(run_num, int) and run_num > 0:
+                    run_ids.add(run_num)
+                else:
+                    run_ids.add(1)
+            except Exception:
+                run_ids.add(1)
+
+    feedbacks_by_run: dict[int, dict[str, Any]] = {}
+    if feedback_dir.is_dir():
+        feedback_files = sorted(feedback_dir.glob(f"{phase_id}-*.json"))
+        for fb_path in feedback_files:
+            try:
+                fb_data = json.loads(fb_path.read_text(encoding="utf-8"))
+                if isinstance(fb_data, dict):
+                    r_id = fb_data.get("run_id")
+                    if isinstance(r_id, int):
+                        feedbacks_by_run[r_id] = fb_data
+            except Exception:
+                pass
+        if not feedbacks_by_run and feedback_files and len(run_ids) == 1:
+            try:
+                fb_data = json.loads(feedback_files[-1].read_text(encoding="utf-8"))
+                if isinstance(fb_data, dict):
+                    feedbacks_by_run[next(iter(run_ids))] = fb_data
+            except Exception:
+                pass
+
+    runs = []
+    for run_id in sorted(run_ids, reverse=True):
+        checkpoint_path = runs_dir / f"{phase_id}-run-{run_id:03d}.md"
+        checkpoint_text = _read_tail(checkpoint_path) if checkpoint_path.exists() else ""
+
+        # Verification
+        v_path = evidence_dir / f"{phase_id}-run-{run_id:03d}-verification.json"
+        if not v_path.exists():
+            candidate = evidence_dir / f"{phase_id}-verification.json"
+            if candidate.exists():
+                try:
+                    c_data = json.loads(candidate.read_text(encoding="utf-8"))
+                    if c_data.get("run_id") == run_id or len(run_ids) == 1:
+                        v_path = candidate
+                except Exception:
+                    pass
+        v_data = None
+        if v_path.exists():
+            try:
+                v_data = json.loads(v_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        v_log_path = evidence_dir / f"{phase_id}-run-{run_id:03d}-verification.log"
+        if not v_log_path.exists() and (evidence_dir / f"{phase_id}-verification.log").exists():
+            if v_path == evidence_dir / f"{phase_id}-verification.json":
+                v_log_path = evidence_dir / f"{phase_id}-verification.log"
+        v_log = _read_tail(v_log_path) if v_log_path.exists() else ""
+
+        # Review
+        r_path = evidence_dir / f"{phase_id}-run-{run_id:03d}-adversarial-review.json"
+        if not r_path.exists():
+            candidate = evidence_dir / f"{phase_id}-adversarial-review.json"
+            if candidate.exists():
+                try:
+                    c_data = json.loads(candidate.read_text(encoding="utf-8"))
+                    if c_data.get("run_id") == run_id or len(run_ids) == 1:
+                        r_path = candidate
+                except Exception:
+                    pass
+        r_data = None
+        if r_path.exists():
+            try:
+                r_data = json.loads(r_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Review Summary
+        s_path = evidence_dir / f"{phase_id}-run-{run_id:03d}-review-summary.json"
+        if not s_path.exists():
+            candidate = evidence_dir / f"{phase_id}-review-summary.json"
+            if candidate.exists():
+                try:
+                    c_data = json.loads(candidate.read_text(encoding="utf-8"))
+                    if c_data.get("run_id") == run_id or len(run_ids) == 1:
+                        s_path = candidate
+                except Exception:
+                    pass
+        s_data = None
+        if s_path.exists():
+            try:
+                s_data = json.loads(s_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        fb_data = feedbacks_by_run.get(run_id)
+
+        agent_log_path = evidence_dir / f"{phase_id}-run-{run_id:03d}-agent.log"
+        agent_log = _read_tail(agent_log_path) if agent_log_path.exists() else ""
+
+        created_at = ""
+        if fb_data and fb_data.get("created_at"):
+            created_at = fb_data["created_at"]
+        elif s_data and s_data.get("created_at"):
+            created_at = s_data["created_at"]
+        elif r_data and r_data.get("created_at"):
+            created_at = r_data["created_at"]
+        elif v_data and v_data.get("created_at"):
+            created_at = v_data["created_at"]
+        elif checkpoint_path.exists():
+            try:
+                created_at = datetime.fromtimestamp(checkpoint_path.stat().st_mtime, timezone.utc).isoformat()
+            except Exception:
+                pass
+
+        stage = "run"
+        if fb_data and fb_data.get("result") == "FEEDBACK":
+            outcome = "HUMAN_FEEDBACK"
+            outcome_label = "差し戻し"
+            fb_text = fb_data.get("feedback") or ""
+            reason = f"人の判断：{fb_text}".strip()
+            next_action = f"修正Run {run_id + 1}を開始"
+            stage = "human_check"
+        elif fb_data and fb_data.get("result") == "ACCEPT":
+            outcome = "ACCEPTED"
+            outcome_label = "承認済み"
+            reason = "テスト・レビューともに合格"
+            next_action = "次へ進む"
+            stage = "human_check"
+        elif r_data and r_data.get("result") == "PASS":
+            outcome = "AWAITING_HUMAN_CHECK"
+            outcome_label = "承認待ち"
+            reason = "テスト・レビューともに合格"
+            next_action = "現在：あなたの承認待ち"
+            stage = "review"
+        elif r_data and r_data.get("result") == "FINDINGS":
+            outcome = "REVIEW_FINDINGS"
+            outcome_label = "レビュー指摘"
+            reason_text = ""
+            if s_data and s_data.get("status") == "SUCCESS":
+                items = s_data.get("items") or []
+                if items and isinstance(items[0], dict) and items[0].get("problem"):
+                    reason_text = items[0]["problem"]
+                elif s_data.get("decision_reason"):
+                    reason_text = s_data["decision_reason"]
+            if not reason_text:
+                findings = r_data.get("findings") or []
+                if findings and isinstance(findings[0], dict) and findings[0].get("description"):
+                    reason_text = findings[0]["description"]
+                elif findings:
+                    reason_text = str(findings[0])
+            reason = reason_text or "レビューで指摘事項が検出されました"
+            next_action = f"指摘を反映してRun {run_id + 1}を開始"
+            stage = "review"
+        elif v_data and v_data.get("overall") == "FAIL":
+            outcome = "VERIFICATION_FAILED"
+            outcome_label = "テスト失敗"
+            failed_checks = [c.get("name") for c in (v_data.get("checks") or []) if c.get("status") != "PASS"]
+            if failed_checks:
+                reason = f"テスト失敗: {', '.join(str(f) for f in failed_checks)}"
+            else:
+                reason = "機械検証に失敗しました"
+            next_action = f"不具合を修正してRun {run_id + 1}を開始"
+            stage = "verification"
+        elif v_data and v_data.get("overall") == "PASS":
+            outcome = "VERIFICATION_PASSED"
+            outcome_label = "検証合格"
+            reason = "機械検証に合格しました"
+            next_action = "レビューを実行"
+            stage = "verification"
+        else:
+            outcome = "CONTINUE"
+            outcome_label = "継続"
+            reason = "実装途中"
+            next_action = f"実装を継続してRun {run_id + 1}を開始"
+            stage = "run"
+
+        runs.append({
+            "phase_id": phase_id,
+            "run_id": run_id,
+            "created_at": created_at,
+            "outcome": outcome,
+            "outcome_label": outcome_label,
+            "reason": reason,
+            "next_action": next_action,
+            "stage": stage,
+            "details": {
+                "checkpoint": checkpoint_text,
+                "verification": v_data,
+                "verification_log": v_log,
+                "review": r_data,
+                "review_summary": s_data,
+                "feedback": fb_data,
+                "agent_log": agent_log,
+            },
+        })
+
+    return runs
+
+
 def available_actions(state: str) -> dict[str, bool]:
     """Describe valid user actions without exposing transition rules to a UI."""
     return {
@@ -83,10 +320,11 @@ def read_issue(work_dir: Path, project_id: str, issue_id: str,
     if not include_evidence:
         return result
 
-    result.update(evidence=[], checkpoint="")
+    result.update(evidence=[], checkpoint="", history=[])
     for phase in phases:
+        phase_runs = _collect_phase_runs(store, phase["id"])
         evidence = {"phase_id": phase["id"], "verification": None, "review": None,
-                    "review_summary": None, "verification_log": ""}
+                    "review_summary": None, "verification_log": "", "runs": phase_runs}
         for key, suffix in (("verification", "verification"),
                             ("review", "adversarial-review"),
                             ("review_summary", "review-summary")):
@@ -97,6 +335,7 @@ def read_issue(work_dir: Path, project_id: str, issue_id: str,
         evidence["verification_log"] = _read_tail(
             store.path / "evidence" / f"{phase['id']}-verification.log")
         result["evidence"].append(evidence)
+        result["history"].extend(phase_runs)
 
     if state.current_phase:
         checkpoints = sorted(
@@ -193,10 +432,11 @@ def read_pipeline(work_dir: Path, target_id: str,
     if not include_evidence:
         return result
 
-    result.update(evidence=[], checkpoint="")
+    result.update(evidence=[], checkpoint="", history=[])
     for phase in phases:
+        phase_runs = _collect_phase_runs(store, phase["id"])
         evidence = {"phase_id": phase["id"], "verification": None, "review": None,
-                    "review_summary": None, "verification_log": ""}
+                    "review_summary": None, "verification_log": "", "runs": phase_runs}
         for key, suffix in (("verification", "verification"),
                             ("review", "adversarial-review"),
                             ("review_summary", "review-summary")):
@@ -207,6 +447,7 @@ def read_pipeline(work_dir: Path, target_id: str,
         evidence["verification_log"] = _read_tail(
             store.path / "evidence" / f"{phase['id']}-verification.log")
         result["evidence"].append(evidence)
+        result["history"].extend(phase_runs)
 
     if state.current_phase:
         checkpoints = sorted(

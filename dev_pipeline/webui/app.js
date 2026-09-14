@@ -125,6 +125,82 @@ function evidenceView() {
   const summary = ev.review_summary;
   return head + businessReviewSummary(summary) + technicalFindings(result,!summary || summary.status !== 'SUCCESS') + '<p class="hint">保存された最新のレビュー結果です。修正中は前回の結果が表示されます。</p>';
 }
+function historyOutcomeBadge(outcome) {
+  switch (outcome) {
+    case 'ACCEPTED':
+      return badge('承認済み', 'success');
+    case 'AWAITING_HUMAN_CHECK':
+      return badge('承認待ち', 'waiting');
+    case 'HUMAN_FEEDBACK':
+      return badge('差し戻し', 'error');
+    case 'REVIEW_FINDINGS':
+      return badge('レビュー指摘', 'error');
+    case 'VERIFICATION_FAILED':
+      return badge('テスト失敗', 'error');
+    case 'VERIFICATION_PASSED':
+      return badge('検証合格', 'success');
+    case 'CONTINUE':
+      return badge('継続', '');
+    default:
+      return badge('実行中', 'running');
+  }
+}
+function historyView() {
+  const ev = detail.evidence.find(e => e.phase_id === evidencePhase) || detail.evidence[0];
+  const head = `<div class="evidence-heading"><h3>実行履歴</h3><select id="evidence-phase" aria-label="履歴を見るフェーズ">${phaseOptions()}</select></div>`;
+  if (!ev) return head + '<p class="muted">フェーズの計画ができると表示されます。</p>';
+
+  const runs = ev.runs || [];
+  const currentPhaseObj = detail.phases.find(p => p.id === (ev.phase_id || evidencePhase));
+  const phaseTitle = currentPhaseObj ? `<div class="history-phase-title">フェーズ ${esc(currentPhaseObj.id.replace('phase-', ''))} · ${esc(currentPhaseObj.goal)}</div>` : '';
+
+  if (!runs.length) {
+    return head + phaseTitle + '<p class="muted" style="margin:20px 0;">まだこのフェーズの実行履歴はありません。</p>' +
+      (detail.job_log ? `<details class="history-job-log"><summary>直近のCLI・ジョブログ</summary><pre class="log">${esc(detail.job_log)}</pre></details>` : '');
+  }
+
+  const items = runs.map(run => {
+    const d = run.details || {};
+    const hasDetails = d.checkpoint || d.verification || d.review || d.feedback || d.agent_log;
+    return `<div class="history-run-card">
+      <div class="history-run-header">
+        <div class="history-run-top">
+          <span class="history-run-id">● Run ${esc(run.run_id)}</span>
+          ${historyOutcomeBadge(run.outcome)}
+          <span class="history-run-time muted">${esc(timestamp(run.created_at))}</span>
+        </div>
+        <div class="history-run-summary">
+          <p class="history-run-reason">${esc(run.reason || '理由の記録なし')}</p>
+          <p class="history-run-next muted">次へ：${esc(run.next_action || 'なし')}</p>
+        </div>
+      </div>
+      ${hasDetails ? `<details class="history-run-details">
+        <summary>詳細ログ・内訳を確認</summary>
+        <div class="history-run-body">
+          ${d.feedback ? `<div class="history-detail-block">
+            <strong>差し戻し・承認コメント</strong>
+            <p class="prose">${esc(d.feedback.feedback || d.feedback.result)}</p>
+          </div>` : ''}
+          ${d.review ? `<div class="history-detail-block">
+            <strong>レビュー結果 (${esc(d.review.result)})</strong>
+            ${(d.review.findings || []).map((f, i) => `<div class="finding"><div class="finding-label"><strong>指摘 #${i+1}</strong>${badge(f.severity || '指摘', ['high','critical'].includes(f.severity)?'error':'waiting')}</div><p>${esc(f.description)}</p>${f.recommendation ? `<p class="recommendation">${esc(f.recommendation)}</p>` : ''}</div>`).join('') || '<p class="muted">指摘なし</p>'}
+          </div>` : ''}
+          ${d.verification ? `<div class="history-detail-block">
+            <strong>機械検証 (${esc(d.verification.overall)})</strong>
+            ${(d.verification.checks || []).map(c => `<div class="check-row"><strong>${esc(c.name)}</strong>${badge(c.status, c.status === 'PASS' ? 'success' : 'error')}<code>${esc(c.command)}</code></div>`).join('')}
+            ${d.verification_log ? `<details><summary>検証ログ</summary><pre class="log">${esc(d.verification_log)}</pre></details>` : ''}
+          </div>` : ''}
+          ${d.checkpoint ? `<div class="history-detail-block">
+            <details><summary>チェックポイント</summary><pre class="log">${esc(d.checkpoint)}</pre></details>
+          </div>` : ''}
+        </div>
+      </details>` : ''}
+    </div>`;
+  }).join('');
+
+  return head + phaseTitle + `<div class="history-timeline">${items}</div>` +
+    (detail.job_log ? `<details class="history-job-log" style="margin-top:24px;"><summary>直近のCLI・ジョブログ</summary><pre class="log">${esc(detail.job_log)}</pre></details>` : '');
+}
 function changelogSection(changelog) {
   if (!changelog) return '';
   const changes = changelog.changes || [];
@@ -163,8 +239,8 @@ function renderDetail(force = false) {
   $('#detail-pane').innerHTML = `<button class="back" id="back">← Issue一覧</button><header class="detail-header"><p class="id">${esc(iss.id)}</p><div class="title-line"><h1>${esc(iss.description)}</h1>${badge(...status(detail))}</div><div class="detail-meta"><span>${esc(detail.config.agent)}</span><span>${count} / ${detail.phases.length} フェーズ完了</span>${detail.usage.total_tokens != null?`<span>${Number(detail.usage.total_tokens).toLocaleString()} tokens</span>`:''}${allocations}</div></header>
   ${detail.job?.error ? `<p class="notice error">${esc(detail.job.error)}</p>`:''}
   ${current ? `<section class="phase-card"><div class="row"><span class="eyebrow">CURRENT PHASE · ${esc(current.id)}</span><span class="muted">Run ${esc(detail.state.current_run)}</span></div><h2>${esc(current.goal)}</h2><div class="phase-track">${detail.phases.map(p=>`<span class="${esc(p.status)}"></span>`).join('')}</div><p class="muted">${jobActive(detail)?'ローカルPCで処理を進めています。':detail.actions.human_check?'テストとレビューが完了しました。あなたの判断を待っています。':'実行を再開できます。'}</p></section>`:''}
-  <nav class="tabs" aria-label="Issueの表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['logs','実行ログ']].map(([id,label])=>`<button data-tab="${id}" class="${tab===id?'selected':''}">${label}</button>`).join('')}</nav>
-  <div id="tab-content">${tab==='overview'?overviewView():tab==='logs'?`<h3>直近の実行ログ</h3><p class="hint">エラーとCLIの実行結果を表示します。エージェント内部のログはPC側に保存されます。</p><pre class="log">${esc(detail.job_log || '出力はまだありません。')}</pre>`:evidenceView()}</div>${actionBar()}`;
+  <nav class="tabs" aria-label="Issueの表示内容">${[['overview','概要'],['tests','テスト'],['review','レビュー'],['history','実行履歴']].map(([id,label])=>`<button data-tab="${id}" class="${(tab===id || (id==='history' && tab==='logs'))?'selected':''}">${label}</button>`).join('')}</nav>
+  <div id="tab-content">${tab==='overview'?overviewView():(tab==='history'||tab==='logs')?historyView():evidenceView()}</div>${actionBar()}`;
   $('#back').onclick = () => updateHash(currentProjectId, '');
   document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => {tab=button.dataset.tab;renderDetail(true);});
   if ($('#evidence-phase')) $('#evidence-phase').onchange = event => {evidencePhase=event.target.value;renderDetail(true);};
